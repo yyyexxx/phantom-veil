@@ -8,6 +8,7 @@ const gl = canvas.getContext('webgl', {
   alpha: false,
   premultipliedAlpha: false,
   preserveDrawingBuffer: false,
+  stencil: true,
 });
 
 if (!gl) {
@@ -115,6 +116,25 @@ void main() {
   }
 
   gl_FragColor = color;
+}`;
+
+// Glass frag: revealed area placeholder
+const glassFrag = /* glsl */ `
+precision mediump float;
+uniform vec2 u_resolution;
+void main() {
+  vec2 uv = gl_FragCoord.xy / u_resolution;
+  vec3 ocean = mix(vec3(0.0, 0.08, 0.2), vec3(0.0, 0.15, 0.35), uv.y);
+  gl_FragColor = vec4(ocean, 1.0);
+}`;
+
+// Stencil fill: maps pixel coords to clip space (same as debug line)
+const stencilVert = /* glsl */ `
+attribute vec2 a_position;
+uniform vec2 u_resolution;
+void main() {
+  vec2 clip = (a_position / u_resolution) * 2.0 - 1.0;
+  gl_Position = vec4(clip * vec2(1.0, -1.0), 0.0, 1.0);
 }`;
 
 const debugLineVert = /* glsl */ `
@@ -234,6 +254,8 @@ function drawDebugLines(prog, posLoc, data, res, color) {
 // --- Render ---
 
 let veilProg, quad, veilMirrorLoc, veilWebcamLoc;
+let glassProg, glassQuad;
+let stencilProg, stencilPosLoc;
 let clothDataTexture, clothDataBuf;
 let lineProg, linePosLoc;
 let pointProg, pointPosLoc, pointSizeLoc;
@@ -243,13 +265,20 @@ function initRender() {
   quad = createQuad(veilProg);
   veilMirrorLoc = gl.getUniformLocation(veilProg, 'u_mirror');
   veilWebcamLoc = gl.getUniformLocation(veilProg, 'u_webcam');
+
+  glassProg = createProgram(quadVert, glassFrag);
+  glassQuad = createQuad(glassProg);
+
+  stencilProg = createProgram(stencilVert, debugColorFrag);
+  stencilPosLoc = gl.getAttribLocation(stencilProg, 'a_position');
+
   lineProg = createProgram(debugLineVert, debugColorFrag);
   linePosLoc = gl.getAttribLocation(lineProg, 'a_position');
   pointProg = createProgram(debugPointVert, debugColorFrag);
   pointPosLoc = gl.getAttribLocation(pointProg, 'a_position');
   pointSizeLoc = gl.getUniformLocation(pointProg, 'u_pointSize');
   webcamTexture = createTexture();
-  clothDataBuf = new Float32Array(38 * 35 * 4); // will resize on cloth creation
+  clothDataBuf = new Float32Array(38 * 35 * 4);
 }
 
 function createClothDataTexture(cloth) {
@@ -359,9 +388,58 @@ function render() {
 
   // Draw
   gl.clearColor(0, 0, 0, 1);
-  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
 
-  // Veil pass (webcam + refraction + moiré)
+  // --- Pass 1: Revealed area (placeholder glass) ---
+  gl.useProgram(glassProg);
+  gl.uniform2f(gl.getUniformLocation(glassProg, 'u_resolution'), res.w, res.h);
+  gl.bindBuffer(gl.ARRAY_BUFFER, glassQuad.posBuf);
+  gl.enableVertexAttribArray(gl.getAttribLocation(glassProg, 'a_position'));
+  gl.vertexAttribPointer(gl.getAttribLocation(glassProg, 'a_position'), 2, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, glassQuad.texBuf);
+  gl.enableVertexAttribArray(gl.getAttribLocation(glassProg, 'a_texCoord'));
+  gl.vertexAttribPointer(gl.getAttribLocation(glassProg, 'a_texCoord'), 2, gl.FLOAT, false, 0, 0);
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+  // --- Pass 2: Stencil — draw cloth grid ---
+  gl.enable(gl.STENCIL_TEST);
+  gl.stencilFunc(gl.ALWAYS, 1, 0xFF);
+  gl.stencilOp(gl.KEEP, gl.KEEP, gl.REPLACE);
+  gl.colorMask(false, false, false, false);
+
+  // Build triangle mesh from cloth grid quads
+  const { cols, rows, points: pts } = cloth;
+  const triVerts = [];
+  for (let y = 0; y < rows - 1; y++) {
+    for (let x = 0; x < cols - 1; x++) {
+      const i = y * cols + x;
+      // Two triangles per quad
+      triVerts.push(pts[i].x, pts[i].y);
+      triVerts.push(pts[i + 1].x, pts[i + 1].y);
+      triVerts.push(pts[i + cols].x, pts[i + cols].y);
+
+      triVerts.push(pts[i + 1].x, pts[i + 1].y);
+      triVerts.push(pts[i + cols + 1].x, pts[i + cols + 1].y);
+      triVerts.push(pts[i + cols].x, pts[i + cols].y);
+    }
+  }
+  const triBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, triBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(triVerts), gl.DYNAMIC_DRAW);
+
+  gl.useProgram(stencilProg);
+  gl.uniform2f(gl.getUniformLocation(stencilProg, 'u_resolution'), res.w, res.h);
+  gl.bindBuffer(gl.ARRAY_BUFFER, triBuf);
+  gl.enableVertexAttribArray(stencilPosLoc);
+  gl.vertexAttribPointer(stencilPosLoc, 2, gl.FLOAT, false, 0, 0);
+  gl.drawArrays(gl.TRIANGLES, 0, triVerts.length / 2);
+  gl.deleteBuffer(triBuf);
+
+  // --- Pass 3: Veil shader (only where stencil == 1) ---
+  gl.stencilFunc(gl.EQUAL, 1, 0xFF);
+  gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+  gl.colorMask(true, true, true, true);
+
   const mirror = handTracker.getCameraFacingMode() === 'user' ? 1.0 : 0.0;
   gl.useProgram(veilProg);
   gl.uniform1f(veilMirrorLoc, mirror);
@@ -383,6 +461,8 @@ function render() {
   gl.enableVertexAttribArray(quad.texLoc);
   gl.vertexAttribPointer(quad.texLoc, 2, gl.FLOAT, false, 0, 0);
   gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+  gl.disable(gl.STENCIL_TEST);
 
   // Debug cloth wireframe (color = clustering ratio)
   const lineData = buildLineBuffer(cloth);
