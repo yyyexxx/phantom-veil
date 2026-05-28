@@ -84,14 +84,19 @@ float isEdge(vec2 uv) {
   return clamp((abs(s0 - sl) + abs(s0 - sr) + abs(s0 - su) + abs(s0 - sd)) * 5.0, 0.0, 1.0);
 }
 
-// Fingertip halo: thin glowing ring around hand position
+// Fingertip halo: thin fluorescent ring
 float fingertipHalo(vec2 uv, vec2 handPos, float pinching) {
   float d = length(uv - handPos);
   float radius = pinching > 0.5 ? 0.035 : 0.022;
-  float thickness = 0.006; // thinner ring
-  float ring = smoothstep(radius, radius - thickness, d)
-             * (1.0 - smoothstep(radius - thickness * 2.0, radius - thickness * 3.0, d));
-  float brightness = pinching > 0.5 ? 0.7 : 0.3;
+  float glow = 0.003; // ring thickness
+  // Outer edge of the ring
+  float outer = 1.0 - smoothstep(radius - glow, radius, d);
+  // Inner edge
+  float inner = 1.0 - smoothstep(radius - glow * 3.0, radius - glow * 2.0, d);
+  float ring = outer * (1.0 - inner);
+  // Soft outer glow
+  ring += (1.0 - smoothstep(radius, radius + glow * 5.0, d)) * 0.15;
+  float brightness = pinching > 0.5 ? 0.8 : 0.3;
   return ring * brightness;
 }
 
@@ -168,11 +173,29 @@ varying vec2 v_texCoord;
 uniform vec2 u_resolution;
 uniform sampler2D u_webcam;
 uniform float u_mirror;
-uniform float u_showGlass; // 1.0 = glass on, 0.0 = raw ocean
+uniform float u_showGlass;
+uniform vec2 u_hand0;
+uniform vec2 u_hand1;
+uniform float u_pinch0;
+uniform float u_pinch1;
+uniform int u_handCount;
+uniform float u_time;
+
+float fingertipHalo(vec2 uv, vec2 handPos, float pinching) {
+  float d = length(uv - handPos);
+  float radius = pinching > 0.5 ? 0.035 : 0.022;
+  float glow = 0.003;
+  float outer = 1.0 - smoothstep(radius - glow, radius, d);
+  float inner = 1.0 - smoothstep(radius - glow * 3.0, radius - glow * 2.0, d);
+  float ring = outer * (1.0 - inner);
+  ring += (1.0 - smoothstep(radius, radius + glow * 5.0, d)) * 0.15;
+  float brightness = pinching > 0.5 ? 0.8 : 0.3;
+  return ring * brightness;
+}
+
 void main() {
   vec2 uv = v_texCoord;
 
-  // Hidden content: ocean gradient
   vec3 top    = vec3(0.04, 0.22, 0.50);
   vec3 bottom = vec3(0.01, 0.12, 0.30);
   vec3 ocean = mix(top, bottom, uv.y);
@@ -184,22 +207,28 @@ void main() {
     return;
   }
 
-  // Refraction: 2-3px subtle UV offset
   float rx = sin(uv.y * 200.0) * 0.0006;
   float ry = cos(uv.x * 180.0) * 0.0004;
   vec2 refrUV = uv + vec2(rx, ry);
 
-  // Re-sample ocean at refracted UV
   vec3 refrOcean = mix(top, bottom, refrUV.y);
   float ray2 = sin(refrUV.x * 40.0 + refrUV.y * 15.0) * sin(refrUV.y * 35.0 - refrUV.x * 10.0);
   refrOcean += ray2 * 0.04;
 
-  // Reflection: webcam blended at 12%
   vec2 camUV = uv;
   if (u_mirror > 0.5) camUV.x = 1.0 - camUV.x;
   vec3 cam = texture2D(u_webcam, camUV).rgb;
 
   vec3 color = mix(refrOcean, cam, 0.12);
+
+  // Fingertip halos on glass too
+  if (u_handCount > 0) {
+    color.rgb += vec3(0.7, 0.85, 1.0) * fingertipHalo(uv, u_hand0, u_pinch0);
+  }
+  if (u_handCount > 1) {
+    color.rgb += vec3(0.7, 0.85, 1.0) * fingertipHalo(uv, u_hand1, u_pinch1);
+  }
+
   gl_FragColor = vec4(color, 1.0);
 }`;
 
@@ -604,6 +633,17 @@ function render() {
   gl.uniform1i(gl.getUniformLocation(glassProg, 'u_webcam'), 0);
   gl.uniform1f(gl.getUniformLocation(glassProg, 'u_mirror'), mirror);
   gl.uniform1f(gl.getUniformLocation(glassProg, 'u_showGlass'), showGlass ? 1.0 : 0.0);
+  // Hand halos on glass
+  gl.uniform1i(gl.getUniformLocation(glassProg, 'u_handCount'), Math.min(inCloth.length, 2));
+  if (inCloth.length > 0) {
+    gl.uniform2f(gl.getUniformLocation(glassProg, 'u_hand0'), inCloth[0].x / res.w, inCloth[0].y / res.h);
+    gl.uniform1f(gl.getUniformLocation(glassProg, 'u_pinch0'), inCloth[0].isPinching ? 1.0 : 0.0);
+  }
+  if (inCloth.length > 1) {
+    gl.uniform2f(gl.getUniformLocation(glassProg, 'u_hand1'), inCloth[1].x / res.w, inCloth[1].y / res.h);
+    gl.uniform1f(gl.getUniformLocation(glassProg, 'u_pinch1'), inCloth[1].isPinching ? 1.0 : 0.0);
+  }
+  gl.uniform1f(gl.getUniformLocation(glassProg, 'u_time'), performance.now() * 0.001);
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, webcamTexture);
   gl.bindBuffer(gl.ARRAY_BUFFER, glassQuad.posBuf);
@@ -614,6 +654,10 @@ function render() {
   gl.vertexAttribPointer(gl.getAttribLocation(glassProg, 'a_texCoord'), 2, gl.FLOAT, false, 0, 0);
   gl.drawArrays(gl.TRIANGLES, 0, 6);
   gl.disable(gl.SCISSOR_TEST);
+
+  // Hands within cloth bounds (for halo rendering in both glass & veil)
+  const clothTop = cloth.baseY, clothBot = cloth.baseY + cloth.height;
+  const inCloth = hands.filter(h => h.y >= clothTop && h.y <= clothBot);
 
   // --- Pass 2 & 3: Stencil + Veil (skipped when veil is hidden) ---
   if (showVeil) {
@@ -670,10 +714,7 @@ function render() {
     gl.uniform1f(gl.getUniformLocation(veilProg, 'u_time'), performance.now() * 0.001);
     gl.uniform1i(gl.getUniformLocation(veilProg, 'u_mode'), currentMode);
 
-    // Pass hand positions (screen px → UV), only if within cloth Y bounds
-    const clothTop = cloth.baseY;
-    const clothBot = cloth.baseY + cloth.height;
-    const inCloth = hands.filter(h => h.y >= clothTop && h.y <= clothBot);
+    // Pass hand positions (screen px → UV)
     gl.uniform1i(gl.getUniformLocation(veilProg, 'u_handCount'), Math.min(inCloth.length, 2));
     if (inCloth.length > 0) {
       gl.uniform2f(gl.getUniformLocation(veilProg, 'u_hand0'),
