@@ -407,9 +407,12 @@ function render() {
       else rightCount++;
     }
     const stackRight = leftCount > rightCount;
-    const stackX = stackRight ? cloth.width - 20 : 20;
+    const edgeX = stackRight ? cloth.width - 5 : 5;
+    const gap = 2; // tight stack: 2px between rings
     for (let i = 0; i < cloth.cols; i++) {
-      cloth.points[i].origX = stackX;
+      // Stack progressively: rings get closer together toward the edge
+      const offset = stackRight ? -(cloth.cols - 1 - i) * gap : i * gap;
+      cloth.points[i].origX = edgeX + offset;
     }
     cloth._autoStacking = true;
   }
