@@ -96,7 +96,7 @@ export function updatePhysics(cloth, grabbedIndices, windX = 0, windY = 0) {
       if (grabbed.has(i)) { p.oldX = p.x; p.oldY = p.y; continue; }
       const vx = (p.x - p.oldX) * cfg.railFriction;
       p.oldX = p.x; p.oldY = p.y;
-      p.x += vx + windX * 0.1; // very light wind, no restore
+      p.x += vx + (p.origX - p.x) * cfg.restoreForce + windX * 0.1;
       continue;
     }
 

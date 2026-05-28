@@ -393,6 +393,9 @@ function render() {
   }
 
   // Physics step
+  // Dynamic restore: 0 during grab, active on release for snap-back
+  cloth.cfg.restoreForce = grabbedIndices.length > 0 ? 0 : 0.01;
+
   const t = performance.now() * 0.001;
   const windX = (Math.sin(t * 0.5) - 0.5) * 0.04;
   const windY = (Math.cos(t * 0.7) - 0.5) * 0.04;
@@ -627,7 +630,7 @@ async function start() {
       gravity: 0.08,
       friction: 0.94,
       stiffness: 0.35,
-      restoreForce: 0,
+      restoreForce: 0.01,
       iterations: 12,
       railFriction: 0.98,
       railDamping: 0.05,
