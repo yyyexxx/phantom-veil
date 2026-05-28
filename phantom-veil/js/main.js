@@ -128,7 +128,15 @@ precision mediump float;
 uniform vec2 u_resolution;
 void main() {
   vec2 uv = gl_FragCoord.xy / u_resolution;
-  vec3 ocean = mix(vec3(0.0, 0.08, 0.2), vec3(0.0, 0.15, 0.35), uv.y);
+  vec3 top    = vec3(0.05, 0.2, 0.45);
+  vec3 mid    = vec3(0.02, 0.35, 0.55);
+  vec3 bottom = vec3(0.01, 0.15, 0.35);
+  float t = smoothstep(0.0, 0.4, uv.y) * (1.0 - smoothstep(0.6, 1.0, uv.y));
+  vec3 ocean = mix(top, mid, uv.y);
+  ocean = mix(ocean, bottom, smoothstep(0.7, 1.0, uv.y));
+  // Subtle light rays
+  float ray = sin(uv.x * 30.0 + uv.y * 10.0) * 0.5 + 0.5;
+  ocean += ray * 0.03;
   gl_FragColor = vec4(ocean, 1.0);
 }`;
 
@@ -416,7 +424,7 @@ function render() {
   updateClothDataTexture(cloth);
 
   // Draw
-  gl.clearColor(0, 0, 0, 1);
+  gl.clearColor(0.01, 0.02, 0.05, 1);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
 
   // --- Pass 1: Stencil — draw cloth grid ---
