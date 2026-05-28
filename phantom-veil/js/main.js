@@ -415,7 +415,7 @@ function render() {
     for (let y = 0; y < rows; y++) {
       // Stack narrows slightly toward bottom (natural curtain drape)
       const rowT = y / (rows - 1); // 0 at top, 1 at bottom
-      const spread = 60 + rowT * 120; // natural curtain bulk: ~60px at top, ~180px at bottom
+      const spread = 180 - rowT * 120; // ~180px at rail, tapers to ~60px at bottom
       for (let x = 0; x < cols; x++) {
         const i = y * cols + x;
         const colT = x / (cols - 1); // 0 at left, 1 at right
@@ -428,34 +428,42 @@ function render() {
     cloth._autoStacking = true;
   }
 
-  // Auto-stack: constant-speed motorized slide
+  // Auto-stack: spring animation with slight bounce
   if (cloth._autoStacking) {
-    const SPEED = 12; // px per frame — constant, like motorized curtain
-    let allDone = true;
+    const SPRING = 0.12;   // spring stiffness
+    const DAMPING = 0.55;  // slightly underdamped — one gentle bounce
+
+    let maxDx = 0;
+    if (!cloth._stackVel) cloth._stackVel = new Float32Array(cloth.points.length);
+    const vel = cloth._stackVel;
 
     for (let i = 0; i < cloth.points.length; i++) {
       const p = cloth.points[i];
       const dx = p.origX - p.x;
-      if (Math.abs(dx) > 2) {
-        allDone = false;
-        const step = Math.sign(dx) * Math.min(SPEED, Math.abs(dx));
-        p.x += step;
-        p.oldX = p.x; // zero velocity — no oscillation
-      } else {
-        p.x = p.origX;
-        p.oldX = p.x;
-      }
+      maxDx = Math.max(maxDx, Math.abs(dx));
+      // Spring: accel = -k*dx - d*vel
+      const accel = SPRING * dx - DAMPING * vel[i];
+      vel[i] += accel;
+      p.x += vel[i];
+      p.oldX = p.x;
     }
 
-    if (allDone) {
-      cloth._autoStacking = false;
+    // Settled: all vertices within 1px and velocity near zero
+    if (maxDx < 1) {
+      let allSettled = true;
+      for (let i = 0; i < cloth.points.length; i++) {
+        if (Math.abs(vel[i]) > 0.3) { allSettled = false; break; }
+      }
+      if (allSettled) {
+        cloth._autoStacking = false;
+        cloth._stackVel = null;
+      }
     }
-    // Disable normal physics during auto-stack
     cloth.cfg.restoreForce = 0;
     cloth.cfg.iterations = 12;
   } else {
-    cloth.cfg.restoreForce = grabbedIndices.length > 0 ? 0 : 0.0008;
-    cloth.cfg.iterations = 12;
+    cloth.cfg.restoreForce = grabbedIndices.length > 0 ? 0 : 0.0003;
+    cloth.cfg.iterations = 6;
   }
 
   const t = performance.now() * 0.001;
@@ -691,7 +699,7 @@ async function start() {
       rows: 46,
       gravity: 0.08,
       friction: 0.94,
-      stiffness: 0.35,
+      stiffness: 0.6,
       restoreForce: 0.01,
       iterations: 12,
       railFriction: 0.98,
