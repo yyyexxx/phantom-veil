@@ -25,7 +25,7 @@ const handTracker = createHandTracker(canvas);
 
 // --- Shaders ---
 
-const webcamVert = /* glsl */ `
+const quadVert = /* glsl */ `
 attribute vec2 a_position;
 attribute vec2 a_texCoord;
 varying vec2 v_texCoord;
@@ -34,15 +34,41 @@ void main() {
   v_texCoord = a_texCoord;
 }`;
 
-const webcamFrag = /* glsl */ `
+const veilFrag = /* glsl */ `
 precision mediump float;
 varying vec2 v_texCoord;
 uniform sampler2D u_webcam;
+uniform sampler2D u_clothData;
 uniform float u_mirror;
+uniform vec2 u_clothTexSize;
+uniform float u_time;
+uniform float u_refraction;
+uniform float u_moireIntensity;
+uniform float u_clothScale; // pixels to UV ratio (1/clothWidth)
+
 void main() {
   vec2 uv = v_texCoord;
   if (u_mirror > 0.5) uv.x = 1.0 - uv.x;
-  gl_FragColor = texture2D(u_webcam, uv);
+
+  // Sample cloth displacement (encoded as 0-1, decode to pixels)
+  vec4 clothSample = texture2D(u_clothData, uv);
+  vec2 disp = (clothSample.rg - 0.5) * 2.0 / u_clothScale; // decode Uint8 → pixels
+
+  // Refraction: offset UV by displacement (scaled to UV space)
+  vec2 refractedUV = uv + disp * u_refraction * u_clothScale;
+
+  // Moiré: fine diagonal interference pattern
+  float freq = 60.0;
+  float moire = sin(refractedUV.x * freq * u_clothTexSize.x) * sin(refractedUV.y * freq * u_clothTexSize.y * 0.77);
+  float moireVal = abs(moire) * u_moireIntensity;
+
+  // Sample webcam
+  vec4 color = texture2D(u_webcam, refractedUV);
+
+  // Blend moiré as subtle bright overlay
+  color.rgb = mix(color.rgb, color.rgb + moireVal * 0.3, 1.0);
+
+  gl_FragColor = color;
 }`;
 
 const debugLineVert = /* glsl */ `
@@ -161,21 +187,63 @@ function drawDebugLines(prog, posLoc, data, res, color) {
 
 // --- Render ---
 
-let webcamProg, webcamQuad, webcamMirrorLoc, webcamTexLoc;
+let veilProg, quad, veilMirrorLoc, veilWebcamLoc;
+let clothDataTexture, clothDataBuf;
 let lineProg, linePosLoc;
 let pointProg, pointPosLoc, pointSizeLoc;
 
 function initRender() {
-  webcamProg = createProgram(webcamVert, webcamFrag);
-  webcamQuad = createQuad(webcamProg);
-  webcamMirrorLoc = gl.getUniformLocation(webcamProg, 'u_mirror');
-  webcamTexLoc = gl.getUniformLocation(webcamProg, 'u_webcam');
+  veilProg = createProgram(quadVert, veilFrag);
+  quad = createQuad(veilProg);
+  veilMirrorLoc = gl.getUniformLocation(veilProg, 'u_mirror');
+  veilWebcamLoc = gl.getUniformLocation(veilProg, 'u_webcam');
   lineProg = createProgram(debugLineVert, debugColorFrag);
   linePosLoc = gl.getAttribLocation(lineProg, 'a_position');
   pointProg = createProgram(debugPointVert, debugColorFrag);
   pointPosLoc = gl.getAttribLocation(pointProg, 'a_position');
   pointSizeLoc = gl.getUniformLocation(pointProg, 'u_pointSize');
   webcamTexture = createTexture();
+  clothDataBuf = new Float32Array(38 * 35 * 4); // will resize on cloth creation
+}
+
+function createClothDataTexture(cloth) {
+  const w = cloth.cols;
+  const h = cloth.rows;
+  const data = new Uint8Array(w * h * 4);
+
+  for (let i = 0; i < cloth.points.length; i++) {
+    const p = cloth.points[i];
+    // Encode displacement as 0-255: ((dx / clothWidth) + 0.5) * 255
+    data[i * 4]     = Math.round(((p.x - p.origX) / cloth.width + 0.5) * 255);
+    data[i * 4 + 1] = Math.round(((p.y - p.origY) / cloth.height + 0.5) * 255);
+    data[i * 4 + 2] = 0;
+    data[i * 4 + 3] = 255;
+  }
+
+  clothDataTexture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, clothDataTexture);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+}
+
+function updateClothDataTexture(cloth) {
+  const w = cloth.cols;
+  const h = cloth.rows;
+  const data = new Uint8Array(w * h * 4);
+
+  for (let i = 0; i < cloth.points.length; i++) {
+    const p = cloth.points[i];
+    data[i * 4]     = Math.round(((p.x - p.origX) / cloth.width + 0.5) * 255);
+    data[i * 4 + 1] = Math.round(((p.y - p.origY) / cloth.height + 0.5) * 255);
+    data[i * 4 + 2] = 0;
+    data[i * 4 + 3] = 255;
+  }
+
+  gl.bindTexture(gl.TEXTURE_2D, clothDataTexture);
+  gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, data);
 }
 
 function render() {
@@ -240,23 +308,36 @@ function render() {
     console.log('  gaps: [' + spacing.join(',') + ']');
   }
 
+  // Update cloth data texture for shader
+  updateClothDataTexture(cloth);
+
   // Draw
   gl.clearColor(0, 0, 0, 1);
   gl.clear(gl.COLOR_BUFFER_BIT);
 
-  // Webcam pass
+  // Veil pass (webcam + refraction + moiré)
   const mirror = handTracker.getCameraFacingMode() === 'user' ? 1.0 : 0.0;
-  gl.useProgram(webcamProg);
-  gl.uniform1i(webcamTexLoc, 0);
-  gl.uniform1f(webcamMirrorLoc, mirror);
+  gl.useProgram(veilProg);
+  gl.uniform1f(veilMirrorLoc, mirror);
+  gl.uniform1i(veilWebcamLoc, 0);
+  gl.uniform1i(gl.getUniformLocation(veilProg, 'u_clothData'), 1);
+  gl.uniform2f(gl.getUniformLocation(veilProg, 'u_clothTexSize'), cloth.cols, cloth.rows);
+  gl.uniform1f(gl.getUniformLocation(veilProg, 'u_time'), performance.now() * 0.001);
+  gl.uniform1f(gl.getUniformLocation(veilProg, 'u_refraction'), 0.003);
+  gl.uniform1f(gl.getUniformLocation(veilProg, 'u_moireIntensity'), 0.04);
+  gl.uniform1f(gl.getUniformLocation(veilProg, 'u_clothScale'), 1.0 / cloth.width);
+
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, webcamTexture);
-  gl.bindBuffer(gl.ARRAY_BUFFER, webcamQuad.posBuf);
-  gl.enableVertexAttribArray(webcamQuad.posLoc);
-  gl.vertexAttribPointer(webcamQuad.posLoc, 2, gl.FLOAT, false, 0, 0);
-  gl.bindBuffer(gl.ARRAY_BUFFER, webcamQuad.texBuf);
-  gl.enableVertexAttribArray(webcamQuad.texLoc);
-  gl.vertexAttribPointer(webcamQuad.texLoc, 2, gl.FLOAT, false, 0, 0);
+  gl.activeTexture(gl.TEXTURE1);
+  gl.bindTexture(gl.TEXTURE_2D, clothDataTexture);
+
+  gl.bindBuffer(gl.ARRAY_BUFFER, quad.posBuf);
+  gl.enableVertexAttribArray(quad.posLoc);
+  gl.vertexAttribPointer(quad.posLoc, 2, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, quad.texBuf);
+  gl.enableVertexAttribArray(quad.texLoc);
+  gl.vertexAttribPointer(quad.texLoc, 2, gl.FLOAT, false, 0, 0);
   gl.drawArrays(gl.TRIANGLES, 0, 6);
 
   // Debug cloth wireframe (color = clustering ratio)
@@ -380,6 +461,8 @@ async function start() {
     }
     cloth.baseX = cx;
     cloth.baseY = cy;
+
+    createClothDataTexture(cloth);
 
     document.getElementById('debug-info').innerText = 'System Active';
     render();
