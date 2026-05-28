@@ -463,6 +463,27 @@ function render() {
   gl.vertexAttribPointer(quad.texLoc, 2, gl.FLOAT, false, 0, 0);
   gl.drawArrays(gl.TRIANGLES, 0, 6);
 
+  // --- Pass 4: Cloth perimeter binding (包边) ---
+  gl.useProgram(stencilProg);
+  gl.uniform3f(gl.getUniformLocation(stencilProg, 'u_color'), 0.9, 0.95, 1.0);
+  const perim = getClothPerimeter(cloth);
+  const edgeVerts = [];
+  for (const p of perim) edgeVerts.push(p.x, p.y);
+  // Close the loop
+  if (perim.length > 0) {
+    edgeVerts.push(perim[0].x, perim[0].y);
+  }
+  const edgeBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, edgeBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(edgeVerts), gl.DYNAMIC_DRAW);
+  gl.uniform2f(gl.getUniformLocation(stencilProg, 'u_resolution'), res.w, res.h);
+  gl.bindBuffer(gl.ARRAY_BUFFER, edgeBuf);
+  gl.enableVertexAttribArray(stencilPosLoc);
+  gl.vertexAttribPointer(stencilPosLoc, 2, gl.FLOAT, false, 0, 0);
+  gl.lineWidth(2.0);
+  gl.drawArrays(gl.LINE_STRIP, 0, edgeVerts.length / 2);
+  gl.deleteBuffer(edgeBuf);
+
   gl.disable(gl.STENCIL_TEST);
 
   // Debug cloth wireframe (color = clustering ratio)
