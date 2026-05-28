@@ -411,7 +411,7 @@ function render() {
 
   if (!grabbedIndices.length && wasGrabbing && !cloth._autoStacking) {
     const ratio = getClusteringRatio(cloth);
-    if (ratio > 0.3) {
+    if (ratio > 0.5) {
       // Orange: auto-stack
       const { cols, rows } = cloth;
     const top = cloth.points.slice(0, cloth.cols);
@@ -569,10 +569,18 @@ function render() {
   gl.vertexAttribPointer(stencilPosLoc, 2, gl.FLOAT, false, 0, 0);
   gl.drawArrays(gl.TRIANGLES, 0, stencilCount / 2);
 
-  // --- Pass 3: Veil shader (only where stencil == 1) ---
+  // --- Pass 3: Veil shader (only where stencil == 1, scissored to cloth bounds) ---
   gl.stencilFunc(gl.EQUAL, 1, 0xFF);
   gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
   gl.colorMask(true, true, true, true);
+
+  gl.enable(gl.SCISSOR_TEST);
+  gl.scissor(
+    cloth.baseX,
+    res.h - cloth.baseY - cloth.height,
+    cloth.width,
+    cloth.height
+  );
 
   const mirror = handTracker.getCameraFacingMode() === 'user' ? 1.0 : 0.0;
   gl.useProgram(veilProg);
@@ -595,6 +603,7 @@ function render() {
   gl.enableVertexAttribArray(quad.texLoc);
   gl.vertexAttribPointer(quad.texLoc, 2, gl.FLOAT, false, 0, 0);
   gl.drawArrays(gl.TRIANGLES, 0, 6);
+  gl.disable(gl.SCISSOR_TEST);
 
   // --- Pass 4: Cloth perimeter binding (包边) ---
   gl.useProgram(stencilProg);
