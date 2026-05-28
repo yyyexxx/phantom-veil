@@ -415,7 +415,7 @@ function render() {
     for (let y = 0; y < rows; y++) {
       // Stack narrows slightly toward bottom (natural curtain drape)
       const rowT = y / (rows - 1); // 0 at top, 1 at bottom
-      const spread = 8 + rowT * 30; // slightly wider at bottom
+      const spread = 60 + rowT * 120; // natural curtain bulk: ~60px at top, ~180px at bottom
       for (let x = 0; x < cols; x++) {
         const i = y * cols + x;
         const colT = x / (cols - 1); // 0 at left, 1 at right
