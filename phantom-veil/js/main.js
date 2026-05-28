@@ -626,8 +626,8 @@ async function start() {
       rows: 46,
       gravity: 0.08,
       friction: 0.94,
-      stiffness: 0.4,
-      restoreForce: 0.0015,
+      stiffness: 0.35,
+      restoreForce: 0,
       iterations: 12,
       railFriction: 0.98,
       railDamping: 0.05,
@@ -639,6 +639,7 @@ async function start() {
     }
     cloth.baseX = cx;
     cloth.baseY = cy;
+    cloth._cy = cy; // save for reset
 
     createClothDataTexture(cloth);
 

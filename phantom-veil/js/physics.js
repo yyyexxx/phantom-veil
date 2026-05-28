@@ -151,12 +151,13 @@ export function updatePhysics(cloth, grabbedIndices, windX = 0, windY = 0) {
 }
 
 export function resetCloth(cloth) {
+  const offsetY = cloth._cy || 0;
   for (let y = 0; y < cloth.rows; y++) {
     for (let x = 0; x < cloth.cols; x++) {
       const i = y * cloth.cols + x;
       const p = cloth.points[i];
       const px = x * cloth.spacingX;
-      const py = y * cloth.spacingY;
+      const py = y * cloth.spacingY + offsetY;
       p.x = px; p.y = py;
       p.oldX = px; p.oldY = py;
       p.origX = px; p.origY = py;
