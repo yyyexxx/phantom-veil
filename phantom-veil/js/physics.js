@@ -191,9 +191,11 @@ export function updatePhysics(cloth, grabbedIndices, windX = 0, windY = 0) {
   }
 
   // --- Update cloth top row from rings (interpolated) ---
-  // Each top-row vertex is placed smoothly between its two nearest rings
+  // Each top-row vertex is placed smoothly between its two nearest rings.
+  // Skip vertices currently being grabbed — hand position takes priority.
   for (let x = 0; x < cols; x++) {
     const idx = x;
+    if (grabbed.has(idx)) continue;
     const p = points[idx];
     const px = x * cloth.spacingX;
 
