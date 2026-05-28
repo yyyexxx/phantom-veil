@@ -54,6 +54,7 @@ uniform vec2 u_hand1;
 uniform float u_pinch0;   // 0=open 1=pinching
 uniform float u_pinch1;
 uniform int u_handCount;
+uniform vec3 u_haloColor;
 
 vec2 getDisp(vec2 uv) {
   vec4 s = texture2D(u_clothData, uv);
@@ -145,10 +146,10 @@ void main() {
 
   // Fingertip halos
   if (u_handCount > 0) {
-    color.rgb += vec3(0.7, 0.85, 1.0) * fingertipHalo(uv, u_hand0, u_pinch0);
+    color.rgb += u_haloColor * fingertipHalo(uv, u_hand0, u_pinch0);
   }
   if (u_handCount > 1) {
-    color.rgb += vec3(0.7, 0.85, 1.0) * fingertipHalo(uv, u_hand1, u_pinch1);
+    color.rgb += u_haloColor * fingertipHalo(uv, u_hand1, u_pinch1);
   }
 
   // Ripples from fingertips
@@ -180,6 +181,7 @@ uniform float u_pinch0;
 uniform float u_pinch1;
 uniform int u_handCount;
 uniform float u_time;
+uniform vec3 u_haloColor;
 
 float fingertipHalo(vec2 uv, vec2 handPos, float pinching) {
   float d = length(uv - handPos);
@@ -223,10 +225,10 @@ void main() {
 
   // Fingertip halos on glass too
   if (u_handCount > 0) {
-    color.rgb += vec3(0.7, 0.85, 1.0) * fingertipHalo(uv, u_hand0, u_pinch0);
+    color.rgb += u_haloColor * fingertipHalo(uv, u_hand0, u_pinch0);
   }
   if (u_handCount > 1) {
-    color.rgb += vec3(0.7, 0.85, 1.0) * fingertipHalo(uv, u_hand1, u_pinch1);
+    color.rgb += u_haloColor * fingertipHalo(uv, u_hand1, u_pinch1);
   }
 
   gl_FragColor = vec4(color, 1.0);
@@ -619,6 +621,10 @@ function render() {
   const clothTop = cloth.baseY, clothBot = cloth.baseY + cloth.height;
   const inCloth = hands.filter(h => h.y >= clothTop && h.y <= clothBot);
 
+  // Halo color: blue when <50% clustered, orange when ≥50%
+  const clusterRatio = getClusteringRatio(cloth);
+  const haloColor = clusterRatio > 0.5 ? [0.95, 0.55, 0.1] : [0.35, 0.7, 1.0];
+
   // --- Pass 1: Glass (hidden content) scissored inside cloth bounds ---
   // Glass is slightly smaller than cloth, centered within it
   const glassMargin = 12; // px inset on each side
@@ -637,7 +643,7 @@ function render() {
   gl.uniform1i(gl.getUniformLocation(glassProg, 'u_webcam'), 0);
   gl.uniform1f(gl.getUniformLocation(glassProg, 'u_mirror'), mirror);
   gl.uniform1f(gl.getUniformLocation(glassProg, 'u_showGlass'), showGlass ? 1.0 : 0.0);
-  // Hand halos on glass
+  gl.uniform3f(gl.getUniformLocation(glassProg, 'u_haloColor'), haloColor[0], haloColor[1], haloColor[2]);
   gl.uniform1i(gl.getUniformLocation(glassProg, 'u_handCount'), Math.min(inCloth.length, 2));
   if (inCloth.length > 0) {
     gl.uniform2f(gl.getUniformLocation(glassProg, 'u_hand0'), inCloth[0].x / res.w, inCloth[0].y / res.h);
@@ -714,7 +720,7 @@ function render() {
     gl.uniform1f(gl.getUniformLocation(veilProg, 'u_time'), performance.now() * 0.001);
     gl.uniform1i(gl.getUniformLocation(veilProg, 'u_mode'), currentMode);
 
-    // Pass hand positions (screen px → UV)
+    gl.uniform3f(gl.getUniformLocation(veilProg, 'u_haloColor'), haloColor[0], haloColor[1], haloColor[2]);
     gl.uniform1i(gl.getUniformLocation(veilProg, 'u_handCount'), Math.min(inCloth.length, 2));
     if (inCloth.length > 0) {
       gl.uniform2f(gl.getUniformLocation(veilProg, 'u_hand0'),
@@ -774,7 +780,6 @@ function render() {
   }
 
   // Debug info
-  const clusterRatio = getClusteringRatio(cloth);
   const gridStatus = showDebugGrid ? 'ON' : 'OFF';
   document.getElementById('debug-info').innerText =
     `Cluster: ${(clusterRatio*100).toFixed(0)}% | Grid:${gridStatus} V:${showVeil?'on':'off'} F:${showGlass?'on':'off'} | [${modeNames[currentMode]}] 1-4 G V F R`;
