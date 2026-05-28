@@ -420,7 +420,6 @@ function render() {
   gl.uniform1i(veilWebcamLoc, 0);
   gl.uniform1i(gl.getUniformLocation(veilProg, 'u_clothData'), 1);
   gl.uniform2f(gl.getUniformLocation(veilProg, 'u_clothTexSize'), cloth.cols, cloth.rows);
-  gl.uniform1f(gl.getUniformLocation(veilProg, 'u_time'), performance.now() * 0.001);
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, webcamTexture);
   gl.activeTexture(gl.TEXTURE1);
@@ -599,7 +598,7 @@ document.getElementById('begin-btn').addEventListener('click', () => {
 window.addEventListener('keydown', (e) => {
   if (e.key === 'r' || e.key === 'R') {
     resetCloth(cloth);
-    document.getElementById('debug-info').innerText =
+    document.getElementById('debug-info').innerText = 'Cluster: 0% | Reset done';
   }
   if (e.key === 'g' || e.key === 'G') {
     showDebugGrid = !showDebugGrid;
