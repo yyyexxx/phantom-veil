@@ -21,6 +21,8 @@ let animationId = null;
 let cloth = null;
 let mouseX = 0, mouseY = 0, mouseDown = false;
 let mouseGrabbedIdx = null;
+let currentMode = 2; // 0=stress 1=wire 2=edge 3=hue (default: edge glow)
+const modeNames = ['Stress', 'Wireframe', 'Edge Glow', 'Hue Shift'];
 const handTracker = createHandTracker(canvas);
 
 // --- Shaders ---
@@ -42,31 +44,62 @@ uniform sampler2D u_clothData;
 uniform float u_mirror;
 uniform vec2 u_clothTexSize;
 uniform float u_time;
-uniform float u_refraction;
-uniform float u_moireIntensity;
-uniform float u_clothScale; // pixels to UV ratio (1/clothWidth)
+uniform int u_mode; // 0=stress 1=wire 2=edge 3=hue
+
+vec2 getDisp(vec2 uv) {
+  vec4 s = texture2D(u_clothData, uv);
+  return (s.rg - 0.5) * 2.0;
+}
+
+float getStress(vec2 uv) {
+  vec2 step = 1.0 / u_clothTexSize;
+  vec2 d0 = getDisp(uv);
+  vec2 dl = getDisp(uv - vec2(step.x, 0.0));
+  vec2 dr = getDisp(uv + vec2(step.x, 0.0));
+  vec2 du = getDisp(uv - vec2(0.0, step.y));
+  vec2 dd = getDisp(uv + vec2(0.0, step.y));
+  return clamp(length(dr - dl) + length(dd - du), 0.0, 1.0);
+}
+
+float isEdge(vec2 uv) {
+  vec2 step = 1.0 / u_clothTexSize;
+  float s0 = getStress(uv);
+  float sl = getStress(uv - vec2(step.x, 0.0));
+  float sr = getStress(uv + vec2(step.x, 0.0));
+  float su = getStress(uv - vec2(0.0, step.y));
+  float sd = getStress(uv + vec2(0.0, step.y));
+  return clamp((abs(s0 - sl) + abs(s0 - sr) + abs(s0 - su) + abs(s0 - sd)) * 5.0, 0.0, 1.0);
+}
 
 void main() {
   vec2 uv = v_texCoord;
   if (u_mirror > 0.5) uv.x = 1.0 - uv.x;
 
-  // Sample cloth displacement (encoded as 0-1, decode to pixels)
-  vec4 clothSample = texture2D(u_clothData, uv);
-  vec2 disp = (clothSample.rg - 0.5) * 2.0 / u_clothScale; // decode Uint8 → pixels
+  vec4 color = texture2D(u_webcam, uv);
+  float stress = getStress(uv);
+  float edge = isEdge(uv);
 
-  // Refraction: offset UV by displacement (scaled to UV space)
-  vec2 refractedUV = uv + disp * u_refraction * u_clothScale;
-
-  // Moiré: fine diagonal interference pattern
-  float freq = 60.0;
-  float moire = sin(refractedUV.x * freq * u_clothTexSize.x) * sin(refractedUV.y * freq * u_clothTexSize.y * 0.77);
-  float moireVal = abs(moire) * u_moireIntensity;
-
-  // Sample webcam
-  vec4 color = texture2D(u_webcam, refractedUV);
-
-  // Blend moiré as subtle bright overlay
-  color.rgb = mix(color.rgb, color.rgb + moireVal * 0.3, 1.0);
+  if (u_mode == 0) {
+    // A: Stress heatmap — bright on stretch, dark on compression
+    color.rgb = mix(color.rgb, color.rgb * 0.6, stress * 0.4);
+    color.rgb += vec3(0.12, 0.14, 0.2) * stress;
+  } else if (u_mode == 1) {
+    // B: Wireframe — grid lines visible on interaction
+    vec2 grid = fract(uv * u_clothTexSize);
+    float line = 1.0 - step(0.04, grid.x) * step(0.04, grid.y);
+    float glow = line * (0.03 + stress * 0.2);
+    color.rgb += glow * 0.7;
+  } else if (u_mode == 2) {
+    // C: Edge glow — bright halo along cloth perimeter
+    float halo = edge * (0.06 + stress * 0.25);
+    color.rgb += vec3(0.5, 0.7, 1.0) * halo;
+  } else {
+    // D: Hue shift — blue-green tint under cloth
+    float tint = 0.02 + stress * 0.06;
+    color.r = mix(color.r, color.r * 0.9, tint);
+    color.g = mix(color.g, color.g * 0.93, tint * 0.7);
+    color.b = mix(color.b, color.b * 1.1, tint);
+  }
 
   gl_FragColor = color;
 }`;
@@ -323,9 +356,7 @@ function render() {
   gl.uniform1i(gl.getUniformLocation(veilProg, 'u_clothData'), 1);
   gl.uniform2f(gl.getUniformLocation(veilProg, 'u_clothTexSize'), cloth.cols, cloth.rows);
   gl.uniform1f(gl.getUniformLocation(veilProg, 'u_time'), performance.now() * 0.001);
-  gl.uniform1f(gl.getUniformLocation(veilProg, 'u_refraction'), 0.003);
-  gl.uniform1f(gl.getUniformLocation(veilProg, 'u_moireIntensity'), 0.04);
-  gl.uniform1f(gl.getUniformLocation(veilProg, 'u_clothScale'), 1.0 / cloth.width);
+  gl.uniform1i(gl.getUniformLocation(veilProg, 'u_mode'), currentMode);
 
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, webcamTexture);
@@ -351,7 +382,7 @@ function render() {
 
   // Debug info
   document.getElementById('debug-info').innerText =
-    `Cluster: ${(ratio*100).toFixed(0)}% | Grabs: ${grabbedIndices.length} | R to reset`;
+    `Cluster: ${(ratio*100).toFixed(0)}% | Grabs: ${grabbedIndices.length} | [${modeNames[currentMode]}] 1-4 R`;
 
   // Debug: hand positions as dots with proper point size
   if (hands.length > 0) {
@@ -447,7 +478,7 @@ async function start() {
     cloth = createCloth(clothW, clothH, {
       cols: 38,
       rows: 35,
-      gravity: 0.12,
+      gravity: 0.25,
       friction: 0.94,
       stiffness: 0.35,
       restoreForce: 0,
@@ -481,7 +512,15 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'r' || e.key === 'R') {
     resetCloth(cloth);
     document.getElementById('debug-info').innerText =
-      'Cluster: 0% | Reset done';
+      'Cluster: 0% | Mode: ' + modeNames[currentMode] + ' | Reset done';
+  }
+  if (e.key === '1') currentMode = 0;
+  if (e.key === '2') currentMode = 1;
+  if (e.key === '3') currentMode = 2;
+  if (e.key === '4') currentMode = 3;
+  if (e.key >= '1' && e.key <= '4') {
+    document.getElementById('debug-info').innerText =
+      'Mode: ' + modeNames[currentMode] + ' (1-4 to switch)';
   }
 });
 
