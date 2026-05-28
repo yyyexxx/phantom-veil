@@ -393,8 +393,35 @@ function render() {
   }
 
   // Physics step
-  // Dynamic restore: 0 during grab, active on release for snap-back
-  cloth.cfg.restoreForce = grabbedIndices.length > 0 ? 0 : 0.01;
+  // Auto-stack: on release from orange state, complete the opening
+  const wasGrabbing = cloth._wasGrabbing;
+  cloth._wasGrabbing = grabbedIndices.length > 0;
+
+  if (!grabbedIndices.length && wasGrabbing && getClusteringRatio(cloth) > 0.3) {
+    // Released while partially open → auto-stack to nearest side
+    const top = cloth.points.slice(0, cloth.cols);
+    const midX = cloth.width / 2;
+    let leftCount = 0, rightCount = 0;
+    for (const p of top) {
+      if (p.x < midX) leftCount++;
+      else rightCount++;
+    }
+    const stackRight = leftCount > rightCount;
+    const stackX = stackRight ? cloth.width - 20 : 20;
+    for (let i = 0; i < cloth.cols; i++) {
+      cloth.points[i].origX = stackX;
+    }
+    cloth._autoStacking = true;
+  }
+
+  // Boosted restore during auto-stack, normal otherwise
+  if (cloth._autoStacking) {
+    const allStacked = cloth.points.slice(0, cloth.cols).every(p => Math.abs(p.x - p.origX) < 3);
+    if (allStacked) cloth._autoStacking = false;
+    cloth.cfg.restoreForce = grabbedIndices.length > 0 ? 0 : 0.02;
+  } else {
+    cloth.cfg.restoreForce = grabbedIndices.length > 0 ? 0 : 0.0008;
+  }
 
   const t = performance.now() * 0.001;
   const windX = (Math.sin(t * 0.5) - 0.5) * 0.04;

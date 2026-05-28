@@ -151,6 +151,8 @@ export function updatePhysics(cloth, grabbedIndices, windX = 0, windY = 0) {
 }
 
 export function resetCloth(cloth) {
+  cloth._autoStacking = false;
+  cloth._wasGrabbing = false;
   const offsetY = cloth._cy || 0;
   for (let y = 0; y < cloth.rows; y++) {
     for (let x = 0; x < cloth.cols; x++) {
