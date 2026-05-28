@@ -677,6 +677,17 @@ function render() {
   document.getElementById('debug-info').innerText =
     `Cluster: ${(clusterRatio*100).toFixed(0)}% | Grid:${gridStatus} V:${showVeil?'on':'off'} F:${showGlass?'on':'off'} | [${modeNames[currentMode]}] 1-4 G V F R`;
 
+  // Update key hints with current state
+  const hints = document.querySelectorAll('#key-hints .hint kbd');
+  if (hints.length >= 9) {
+    // Grid hint
+    hints[3].style.opacity = showDebugGrid ? '1' : '0.4';
+    // V hint
+    hints[4].style.opacity = showVeil ? '1' : '0.4';
+    // F hint
+    hints[6].style.opacity = showGlass ? '1' : '0.4';
+  }
+
   // Debug: hand positions as dots
   if (showDebugGrid && hands.length > 0) {
     let di = 0;
