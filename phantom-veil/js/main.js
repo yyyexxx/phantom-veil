@@ -369,7 +369,8 @@ async function start() {
       gravity: 0.12,
       friction: 0.94,
       stiffness: 0.35,
-      restoreForce: 0.0005,
+      restoreForce: 0,
+      railDamping: 0.03,
       openThreshold: 200,
     });
     for (const p of cloth.points) {

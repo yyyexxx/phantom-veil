@@ -31,7 +31,7 @@ Phantom Veil is a browser-based interactive digital art piece. A full-screen web
 19. As a visitor, I want the ocean video's audio to sound muffled (low-pass filtered) as if heard through glass, becoming clearer as more of the veil is opened.
 20. As a visitor, I want to see tiny dust particles float up when my hand moves near the veil, like sunlit dust disturbed by movement — subtle and not distracting.
 21. As a visitor, I want both hands to work simultaneously, so that I can pull the veil open from both sides like a stage curtain if I choose.
-22. As a visitor, I want the veil to automatically close after 30 seconds if I walk away (hands disappear from camera), so that the next visitor gets the full experience.
+22. As a visitor, I want the veil to automatically close after 10 seconds if I walk away (hands disappear from camera), so that the next visitor gets the full experience.
 23. As a visitor using a phone, I want the experience to work smoothly whether I hold my phone in portrait or landscape, so that I'm not forced into a specific grip.
 24. As a visitor on desktop without a webcam, I want to use my mouse to drag the veil open/closed, so that I can still experience the core interaction.
 25. As a visitor, I want a beautiful Apple Liquid Glass style start screen with a single button to begin, so that the experience feels polished from the first impression.

@@ -23,7 +23,7 @@ Cross-device polish that ensures Phantom Veil works seamlessly across phones, ta
 - [ ] Canvas and cloth grid resize correctly on orientation change without visual glitch
 - [ ] No forced orientation — both portrait and landscape work
 - [ ] Auto-reset timer starts when last hand disappears from frame
-- [ ] After 30 seconds with no hands, veil smoothly animates back to closed
+- [ ] After 10 seconds with no hands, veil smoothly animates back to closed
 - [ ] Timer resets if a hand reappears before the 30-second mark
 - [ ] Mouse left-click drag functions as pinch-grab when no hand tracking
 - [ ] Mouse drag is horizontal-only (simulates lateral pull, no peek)
@@ -31,7 +31,7 @@ Cross-device polish that ensures Phantom Veil works seamlessly across phones, ta
 
 ## User stories
 
-- #22 — Veil auto-closes after 30 seconds when user leaves
+- #22 — Veil auto-closes after 10 seconds when user leaves
 - #23 — Works in portrait and landscape
 - #24 — Mouse drag on desktop without webcam
 - #29 — Smooth on both desktop and phone
