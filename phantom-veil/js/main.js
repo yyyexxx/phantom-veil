@@ -22,9 +22,9 @@ let animationId = null;
 let cloth = null;
 let mouseX = 0, mouseY = 0, mouseDown = false;
 let mouseGrabbedIdx = null;
-let currentMode = 2; // 0=stress 1=wire 2=edge 3=hue (default: edge glow)
+let currentMode = 3; // 0=stress 1=wire 2=edge 3=velvet (default: velvet)
 let showDebugGrid = true; // G to toggle
-const modeNames = ['Stress', 'Wireframe', 'Edge Glow', 'Hue Shift'];
+const modeNames = ['Stress', 'Wireframe', 'Edge Glow', 'Velvet'];
 const handTracker = createHandTracker(canvas);
 
 // --- Shaders ---
@@ -46,7 +46,7 @@ uniform sampler2D u_clothData;
 uniform float u_mirror;
 uniform vec2 u_clothTexSize;
 uniform float u_time;
-uniform int u_mode; // 0=stress 1=wire 2=edge 3=hue
+uniform int u_mode; // 0=stress 1=wire 2=edge 3=velvet
 
 vec2 getDisp(vec2 uv) {
   vec4 s = texture2D(u_clothData, uv);
@@ -109,11 +109,11 @@ void main() {
     float halo = edge * (0.06 + intensity * 0.25);
     color.rgb += vec3(0.5, 0.7, 1.0) * halo;
   } else {
-    // D: Hue shift
-    float tint = 0.02 + intensity * 0.06;
-    color.r = mix(color.r, color.r * 0.9, tint);
-    color.g = mix(color.g, color.g * 0.93, tint * 0.7);
-    color.b = mix(color.b, color.b * 1.1, tint);
+    // D: Solid red velvet curtain
+    float noise = fract(sin(dot(uv * 80.0, vec2(12.9898, 78.233))) * 43758.5453);
+    vec3 dark  = vec3(0.28, 0.02, 0.03);
+    vec3 mid   = vec3(0.42, 0.03, 0.05);
+    color.rgb = mix(dark, mid, noise);
   }
 
   gl_FragColor = color;
@@ -611,7 +611,7 @@ async function start() {
       rows: 46,
       gravity: 0.08,
       friction: 0.94,
-      stiffness: 0.6,
+      stiffness: 0.4,
       restoreForce: 0.0015,
       iterations: 12,
       railFriction: 0.94,
