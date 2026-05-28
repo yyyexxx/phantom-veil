@@ -611,10 +611,10 @@ function render() {
   }
 
   // Debug info
-  const ratio = getClusteringRatio(cloth);
+  const clusterRatio = getClusteringRatio(cloth);
   const gridStatus = showDebugGrid ? 'ON' : 'OFF';
   document.getElementById('debug-info').innerText =
-    `Cluster: ${(ratio*100).toFixed(0)}% | Grid: ${gridStatus} | [${modeNames[currentMode]}] 1-4 G R`;
+    `Cluster: ${(clusterRatio*100).toFixed(0)}% | Grid: ${gridStatus} | [${modeNames[currentMode]}] 1-4 G R`;
 
   // Debug: hand positions as dots
   if (showDebugGrid && hands.length > 0) {
