@@ -629,8 +629,8 @@ async function start() {
       stiffness: 0.4,
       restoreForce: 0.0015,
       iterations: 12,
-      railFriction: 0.94,
-      railDamping: 1.0,
+      railFriction: 0.98,
+      railDamping: 0.05,
     });
     for (const p of cloth.points) {
       p.x += cx; p.y += cy;
