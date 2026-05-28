@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#000000">
+  <title>Phantom Veil</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <canvas id="veil-canvas"></canvas>
+
+  <div id="ui-overlay">
+    <h1>Phantom Veil</h1>
+    <p>Pinch and pull the invisible curtain to reveal what lies beneath.</p>
+    <button id="begin-btn">Begin</button>
+    <p id="status-msg">Camera access is required for hand tracking.</p>
+  </div>
+
+  <div id="debug-info">Initializing...</div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="js/main.js" type="module"></script>
+</body>
+</html>
