@@ -419,18 +419,7 @@ function render() {
   gl.clearColor(0, 0, 0, 1);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
 
-  // --- Pass 1: Revealed area (placeholder glass) ---
-  gl.useProgram(glassProg);
-  gl.uniform2f(gl.getUniformLocation(glassProg, 'u_resolution'), res.w, res.h);
-  gl.bindBuffer(gl.ARRAY_BUFFER, glassQuad.posBuf);
-  gl.enableVertexAttribArray(gl.getAttribLocation(glassProg, 'a_position'));
-  gl.vertexAttribPointer(gl.getAttribLocation(glassProg, 'a_position'), 2, gl.FLOAT, false, 0, 0);
-  gl.bindBuffer(gl.ARRAY_BUFFER, glassQuad.texBuf);
-  gl.enableVertexAttribArray(gl.getAttribLocation(glassProg, 'a_texCoord'));
-  gl.vertexAttribPointer(gl.getAttribLocation(glassProg, 'a_texCoord'), 2, gl.FLOAT, false, 0, 0);
-  gl.drawArrays(gl.TRIANGLES, 0, 6);
-
-  // --- Pass 2: Stencil — draw cloth grid ---
+  // --- Pass 1: Stencil — draw cloth grid ---
   gl.enable(gl.STENCIL_TEST);
   gl.stencilFunc(gl.ALWAYS, 1, 0xFF);
   gl.stencilOp(gl.KEEP, gl.KEEP, gl.REPLACE);
@@ -460,6 +449,21 @@ function render() {
   gl.enableVertexAttribArray(stencilPosLoc);
   gl.vertexAttribPointer(stencilPosLoc, 2, gl.FLOAT, false, 0, 0);
   gl.drawArrays(gl.TRIANGLES, 0, stencilCount / 2);
+
+  // --- Pass 2: Glass inside stencil (hidden content, cloth-sized) ---
+  gl.stencilFunc(gl.EQUAL, 1, 0xFF);
+  gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+  gl.colorMask(true, true, true, true);
+
+  gl.useProgram(glassProg);
+  gl.uniform2f(gl.getUniformLocation(glassProg, 'u_resolution'), res.w, res.h);
+  gl.bindBuffer(gl.ARRAY_BUFFER, glassQuad.posBuf);
+  gl.enableVertexAttribArray(gl.getAttribLocation(glassProg, 'a_position'));
+  gl.vertexAttribPointer(gl.getAttribLocation(glassProg, 'a_position'), 2, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, glassQuad.texBuf);
+  gl.enableVertexAttribArray(gl.getAttribLocation(glassProg, 'a_texCoord'));
+  gl.vertexAttribPointer(gl.getAttribLocation(glassProg, 'a_texCoord'), 2, gl.FLOAT, false, 0, 0);
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
 
   // --- Pass 3: Veil shader (only where stencil == 1) ---
   gl.stencilFunc(gl.EQUAL, 1, 0xFF);
@@ -613,9 +617,9 @@ async function start() {
     const sw = window.innerWidth * dpr;
     const sh = window.innerHeight * dpr;
     const clothW = sw;
-    const clothH = sh;
+    const clothH = sh * 0.8;
     const cx = 0;
-    const cy = 0;
+    const cy = sh * 0.1;
     cloth = createCloth(clothW, clothH, {
       cols: 50,
       rows: 46,
