@@ -116,15 +116,13 @@ export function updatePhysics(cloth, grabbedIndices, windX = 0, windY = 0) {
   for (let i = 0; i < points.length; i++) {
     const p = points[i];
     if (p.railPinned) {
-      // Rail vertex: Y locked, X free, no gravity
       if (grabbed.has(i)) { p.oldX = p.x; p.oldY = p.y; continue; }
+      // In open mode: rail stays frozen — only direct grab can move it
+      if (isOpen) { p.oldX = p.x; p.oldY = p.y; continue; }
+      // Closed/peek: light restore + wind
       const vx = (p.x - p.oldX) * cfg.friction;
       p.oldX = p.x; p.oldY = p.y;
-      if (!isOpen) {
-        p.x += vx + windX + (p.origX - p.x) * 0.002;
-      } else {
-        p.x += vx + windX;
-      }
+      p.x += vx + windX + (p.origX - p.x) * 0.002;
       continue;
     }
 
@@ -167,12 +165,12 @@ export function updatePhysics(cloth, grabbedIndices, windX = 0, windY = 0) {
       const oy = dy * diff * s.stiffness;
 
       if (!grabbed.has(s.p0)) {
-        p0.x -= ox;
-        if (!p0.railPinned) p0.y -= oy;
+        if (isOpen && p0.railPinned) { /* frozen */ }
+        else { p0.x -= ox; if (!p0.railPinned) p0.y -= oy; }
       }
       if (!grabbed.has(s.p1)) {
-        p1.x += ox;
-        if (!p1.railPinned) p1.y += oy;
+        if (isOpen && p1.railPinned) { /* frozen */ }
+        else { p1.x += ox; if (!p1.railPinned) p1.y += oy; }
       }
     }
   }
