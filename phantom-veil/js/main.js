@@ -398,7 +398,7 @@ function render() {
   cloth._wasGrabbing = grabbedIndices.length > 0;
 
   if (!grabbedIndices.length && wasGrabbing && getClusteringRatio(cloth) > 0.3) {
-    // Released while partially open → auto-stack to nearest side
+    // Released while partially open → auto-stack entire cloth to nearest side
     const top = cloth.points.slice(0, cloth.cols);
     const midX = cloth.width / 2;
     let leftCount = 0, rightCount = 0;
@@ -408,22 +408,35 @@ function render() {
     }
     const stackRight = leftCount > rightCount;
     const edgeX = stackRight ? cloth.width - 5 : 5;
-    const gap = 2; // tight stack: 2px between rings
-    for (let i = 0; i < cloth.cols; i++) {
-      // Stack progressively: rings get closer together toward the edge
-      const offset = stackRight ? -(cloth.cols - 1 - i) * gap : i * gap;
-      cloth.points[i].origX = edgeX + offset;
+    const gap = 2;
+    const { cols, rows } = cloth;
+
+    // Move ALL cloth vertices' origX toward the stack edge
+    for (let y = 0; y < rows; y++) {
+      // Stack narrows slightly toward bottom (natural curtain drape)
+      const rowT = y / (rows - 1); // 0 at top, 1 at bottom
+      const spread = 8 + rowT * 30; // slightly wider at bottom
+      for (let x = 0; x < cols; x++) {
+        const i = y * cols + x;
+        const colT = x / (cols - 1); // 0 at left, 1 at right
+        const targetX = stackRight
+          ? edgeX - (1 - colT) * spread
+          : edgeX + colT * spread;
+        cloth.points[i].origX = targetX;
+      }
     }
     cloth._autoStacking = true;
   }
 
-  // Boosted restore during auto-stack, normal otherwise
+  // Boosted restore + higher iterations during auto-stack
   if (cloth._autoStacking) {
-    const allStacked = cloth.points.slice(0, cloth.cols).every(p => Math.abs(p.x - p.origX) < 3);
+    const allStacked = cloth.points.every(p => Math.abs(p.x - p.origX) < 5);
     if (allStacked) cloth._autoStacking = false;
-    cloth.cfg.restoreForce = grabbedIndices.length > 0 ? 0 : 0.02;
+    cloth.cfg.restoreForce = grabbedIndices.length > 0 ? 0 : 0.03;
+    cloth.cfg.iterations = 20; // propagate stack through all rows
   } else {
     cloth.cfg.restoreForce = grabbedIndices.length > 0 ? 0 : 0.0008;
+    cloth.cfg.iterations = 12;
   }
 
   const t = performance.now() * 0.001;
