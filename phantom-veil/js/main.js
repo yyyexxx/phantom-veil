@@ -84,12 +84,14 @@ float isEdge(vec2 uv) {
   return clamp((abs(s0 - sl) + abs(s0 - sr) + abs(s0 - su) + abs(s0 - sd)) * 5.0, 0.0, 1.0);
 }
 
-// Fingertip halo: glowing ring around hand position
+// Fingertip halo: thin glowing ring around hand position
 float fingertipHalo(vec2 uv, vec2 handPos, float pinching) {
   float d = length(uv - handPos);
-  float size = pinching > 0.5 ? 0.04 : 0.025; // larger when pinching
-  float ring = smoothstep(size, size * 0.5, d) * (1.0 - smoothstep(size * 0.3, 0.0, d));
-  float brightness = pinching > 0.5 ? 0.8 : 0.35;
+  float radius = pinching > 0.5 ? 0.035 : 0.022;
+  float thickness = 0.006; // thinner ring
+  float ring = smoothstep(radius, radius - thickness, d)
+             * (1.0 - smoothstep(radius - thickness * 2.0, radius - thickness * 3.0, d));
+  float brightness = pinching > 0.5 ? 0.7 : 0.3;
   return ring * brightness;
 }
 
@@ -668,17 +670,20 @@ function render() {
     gl.uniform1f(gl.getUniformLocation(veilProg, 'u_time'), performance.now() * 0.001);
     gl.uniform1i(gl.getUniformLocation(veilProg, 'u_mode'), currentMode);
 
-    // Pass hand positions (screen px → UV)
-    gl.uniform1i(gl.getUniformLocation(veilProg, 'u_handCount'), Math.min(hands.length, 2));
-    if (hands.length > 0) {
+    // Pass hand positions (screen px → UV), only if within cloth Y bounds
+    const clothTop = cloth.baseY;
+    const clothBot = cloth.baseY + cloth.height;
+    const inCloth = hands.filter(h => h.y >= clothTop && h.y <= clothBot);
+    gl.uniform1i(gl.getUniformLocation(veilProg, 'u_handCount'), Math.min(inCloth.length, 2));
+    if (inCloth.length > 0) {
       gl.uniform2f(gl.getUniformLocation(veilProg, 'u_hand0'),
-        hands[0].x / res.w, hands[0].y / res.h);
-      gl.uniform1f(gl.getUniformLocation(veilProg, 'u_pinch0'), hands[0].isPinching ? 1.0 : 0.0);
+        inCloth[0].x / res.w, inCloth[0].y / res.h);
+      gl.uniform1f(gl.getUniformLocation(veilProg, 'u_pinch0'), inCloth[0].isPinching ? 1.0 : 0.0);
     }
-    if (hands.length > 1) {
+    if (inCloth.length > 1) {
       gl.uniform2f(gl.getUniformLocation(veilProg, 'u_hand1'),
-        hands[1].x / res.w, hands[1].y / res.h);
-      gl.uniform1f(gl.getUniformLocation(veilProg, 'u_pinch1'), hands[1].isPinching ? 1.0 : 0.0);
+        inCloth[1].x / res.w, inCloth[1].y / res.h);
+      gl.uniform1f(gl.getUniformLocation(veilProg, 'u_pinch1'), inCloth[1].isPinching ? 1.0 : 0.0);
     }
 
     gl.activeTexture(gl.TEXTURE0);
