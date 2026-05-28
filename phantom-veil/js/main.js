@@ -471,7 +471,7 @@ function render() {
   const ratio = getClusteringRatio(cloth);
   const gridStatus = showDebugGrid ? 'ON' : 'OFF';
   document.getElementById('debug-info').innerText =
-    \`Cluster: \${(ratio*100).toFixed(0)}% | Grid: \${gridStatus} | G R\`;
+    'Cluster: ' + (ratio*100).toFixed(0) + '% | Grid: ' + gridStatus + ' | G R';
 
   // Debug: hand positions as dots
   if (showDebugGrid && hands.length > 0) {
