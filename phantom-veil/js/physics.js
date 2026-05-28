@@ -1,6 +1,6 @@
 // --- Phantom Veil — Physics Engine ---
-// Top-row vertices ARE the rings — they slide freely on the rod (Y=0, X free).
-// Cloth hangs from them via regular stick constraints.
+// Pure physics model: no mode switching. Rail vertices slide with high friction,
+// can cluster freely, resist movement from cloth tension.
 
 export const DEFAULT_CONFIG = {
   cols: 38,
@@ -8,10 +8,11 @@ export const DEFAULT_CONFIG = {
   gravity: 0.10,
   friction: 0.92,
   stiffness: 0.35,
-  restoreForce: 0.0,
+  restoreForce: 0.0005,
+  railFriction: 0.96,     // rail vertices: higher friction = stay where put
+  railDamping: 0.15,       // rail vertices in constraints: only absorb 15% of force
   iterations: 6,
   interactionRadius: 150,
-  openThreshold: 50,
 };
 
 export function createCloth(width, height, config = {}) {
@@ -32,17 +33,14 @@ export function createCloth(width, height, config = {}) {
         x: px, y: py,
         oldX: px, oldY: py,
         origX: px, origY: py,
-        railPinned: y === 0, // top row = curtain rod (Y locked, X slides freely)
+        railPinned: y === 0,
       });
     }
   }
 
-  // Grid sticks
   for (let y = 0; y < rows; y++) {
     for (let x = 0; x < cols; x++) {
       const idx = y * cols + x;
-      // Top row has NO horizontal sticks — vertices slide freely on the rod.
-      // Prevent crossing via rail order enforcement after constraint relaxation.
       if (x < cols - 1 && y > 0) {
         sticks.push({ p0: idx, p1: idx + 1, len: spacingX, stiffness: cfg.stiffness });
       }
@@ -52,14 +50,7 @@ export function createCloth(width, height, config = {}) {
     }
   }
 
-  return {
-    points, sticks, cols, rows,
-    spacingX, spacingY,
-    baseX: 0, baseY: 0,
-    width, height,
-    mode: 'closed',
-    cfg,
-  };
+  return { points, sticks, cols, rows, spacingX, spacingY, width, height, cfg };
 }
 
 export function getClothPerimeter(cloth) {
@@ -77,7 +68,7 @@ export function findClosestPoint(cloth, sx, sy, radius) {
   let minDistSq = radius * radius;
   for (let i = 0; i < cloth.points.length; i++) {
     const p = cloth.points[i];
-    if (p.railPinned) continue; // don't grab rail vertices directly
+    if (p.railPinned) continue;
     const dx = p.x - sx, dy = p.y - sy;
     const dSq = dx * dx + dy * dy;
     if (dSq < minDistSq) { minDistSq = dSq; closest = i; }
@@ -85,50 +76,27 @@ export function findClosestPoint(cloth, sx, sy, radius) {
   return closest;
 }
 
+export function getClusteringRatio(cloth) {
+  // Fraction of top-row vertices that are clustered (gap < 10px)
+  let clustered = 0;
+  for (let i = 1; i < cloth.cols; i++) {
+    if (cloth.points[i].x - cloth.points[i - 1].x < 10) clustered++;
+  }
+  return clustered / (cloth.cols - 1);
+}
+
 export function updatePhysics(cloth, grabbedIndices, windX = 0, windY = 0) {
   const { points, sticks, cfg } = cloth;
   const grabbed = new Set(grabbedIndices);
-  const hasGrabs = grabbedIndices.length > 0;
-
-  // --- Mode detection ---
-  // Track grab start position for displacement-based open detection
-  if (hasGrabs && !cloth._wasGrabbing) {
-    // Grab just started — anchor the grab start X
-    cloth._grabStartX = points[grabbedIndices[0]].x;
-  }
-  cloth._wasGrabbing = hasGrabs;
-
-  if (cloth.mode === 'closed' && hasGrabs) {
-    cloth.mode = 'peek';
-  }
-  if (cloth.mode === 'peek' && cloth._grabStartX !== undefined) {
-    for (const gi of grabbedIndices) {
-      if (Math.abs(points[gi].x - cloth._grabStartX) > cfg.openThreshold) {
-        cloth.mode = 'open';
-        for (let i = 0; i < cloth.cols; i++) {
-          points[i].origX = points[i].x;
-        }
-        break;
-      }
-    }
-  }
-  if (!hasGrabs && cloth.mode === 'peek') {
-    cloth.mode = 'closed';
-  }
-
-  const isOpen = cloth.mode === 'open';
 
   // --- Verlet integration ---
   for (let i = 0; i < points.length; i++) {
     const p = points[i];
     if (p.railPinned) {
       if (grabbed.has(i)) { p.oldX = p.x; p.oldY = p.y; continue; }
-      // In open mode: rail stays frozen — only direct grab can move it
-      if (isOpen) { p.oldX = p.x; p.oldY = p.y; continue; }
-      // Closed/peek: light restore + wind
-      const vx = (p.x - p.oldX) * cfg.friction;
+      const vx = (p.x - p.oldX) * cfg.railFriction;
       p.oldX = p.x; p.oldY = p.y;
-      p.x += vx + windX + (p.origX - p.x) * 0.002;
+      p.x += vx + windX * 0.1; // very light wind, no restore
       continue;
     }
 
@@ -143,11 +111,10 @@ export function updatePhysics(cloth, grabbedIndices, windX = 0, windY = 0) {
     p.y += vy + windY + ry + cfg.gravity;
   }
 
-  // --- Enforce rail vertex order (no crossing, but clustering allowed) ---
+  // --- Rail order enforcement (cluster allowed, no crossing) ---
   for (let i = 1; i < cloth.cols; i++) {
     const prev = points[i - 1];
     const curr = points[i];
-    // If vertices crossed, push them apart to minimum gap of 2px
     if (curr.x < prev.x + 2) {
       const mid = (prev.x + curr.x) / 2;
       prev.x = mid - 1;
@@ -170,22 +137,20 @@ export function updatePhysics(cloth, grabbedIndices, windX = 0, windY = 0) {
       const ox = dx * diff * s.stiffness;
       const oy = dy * diff * s.stiffness;
 
+      // Rail vertices are "heavy" — they resist constraint forces
       if (!grabbed.has(s.p0)) {
-        if (isOpen && p0.railPinned) { /* frozen */ }
-        else { p0.x -= ox; if (!p0.railPinned) p0.y -= oy; }
+        p0.x -= ox * (p0.railPinned ? cfg.railDamping : 1);
+        if (!p0.railPinned) p0.y -= oy;
       }
       if (!grabbed.has(s.p1)) {
-        if (isOpen && p1.railPinned) { /* frozen */ }
-        else { p1.x += ox; if (!p1.railPinned) p1.y += oy; }
+        p1.x += ox * (p1.railPinned ? cfg.railDamping : 1);
+        if (!p1.railPinned) p1.y += oy;
       }
     }
   }
 }
 
 export function resetCloth(cloth) {
-  cloth.mode = 'closed';
-  cloth._wasGrabbing = false;
-  cloth._grabStartX = undefined;
   for (let y = 0; y < cloth.rows; y++) {
     for (let x = 0; x < cloth.cols; x++) {
       const i = y * cloth.cols + x;

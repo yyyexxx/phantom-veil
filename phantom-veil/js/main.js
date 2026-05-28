@@ -1,6 +1,6 @@
 // --- Phantom Veil — Main Entry ---
 
-import { createCloth, updatePhysics, findClosestPoint, getClothPerimeter, resetCloth } from './physics.js';
+import { createCloth, updatePhysics, findClosestPoint, getClothPerimeter, resetCloth, getClusteringRatio } from './physics.js';
 import { createHandTracker } from './hand-tracking.js';
 
 const canvas = document.getElementById('veil-canvas');
@@ -234,7 +234,7 @@ function render() {
     for (let i = 1; i < top.length; i++) {
       spacing.push((top[i].x - top[i-1].x).toFixed(0));
     }
-    console.log('mode=' + cloth.mode, 'grabs=' + grabbedIndices.length);
+    console.log('cluster=' + (getClusteringRatio(cloth)*100).toFixed(0) + '% grabs=' + grabbedIndices.length);
     console.log('  topX: [' + xs + ']');
     console.log('  origX: [' + origXs + ']');
     console.log('  gaps: [' + spacing.join(',') + ']');
@@ -259,18 +259,18 @@ function render() {
   gl.vertexAttribPointer(webcamQuad.texLoc, 2, gl.FLOAT, false, 0, 0);
   gl.drawArrays(gl.TRIANGLES, 0, 6);
 
-  // Debug cloth wireframe (color = mode)
+  // Debug cloth wireframe (color = clustering ratio)
   const lineData = buildLineBuffer(cloth);
-  const modeColors = {
-    closed: [0.0, 1.0, 0.7],   // green
-    peek:   [0.3, 0.7, 1.0],   // blue = actively grabbed
-    open:   [1.0, 0.5, 0.0],   // orange = fully open, rail locked
-  };
-  drawDebugLines(lineProg, linePosLoc, lineData, res, modeColors[cloth.mode] || modeColors.closed);
+  const ratio = getClusteringRatio(cloth);
+  let wireColor;
+  if (ratio > 0.5) wireColor = [1.0, 0.5, 0.0];        // orange = mostly clustered
+  else if (grabbedIndices.length > 0) wireColor = [0.3, 0.7, 1.0]; // blue = being grabbed
+  else wireColor = [0.0, 1.0, 0.7];                    // green = default
+  drawDebugLines(lineProg, linePosLoc, lineData, res, wireColor);
 
   // Debug info
   document.getElementById('debug-info').innerText =
-    `Mode: ${cloth.mode} | Grab: ${grabbedIndices.length} | Press R to reset`;
+    `Cluster: ${(ratio*100).toFixed(0)}% | Grabs: ${grabbedIndices.length} | R to reset`;
 
   // Debug: hand positions as dots with proper point size
   if (hands.length > 0) {
@@ -397,7 +397,7 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'r' || e.key === 'R') {
     resetCloth(cloth);
     document.getElementById('debug-info').innerText =
-      'Mode: closed | Reset done';
+      'Cluster: 0% | Reset done';
   }
 });
 
