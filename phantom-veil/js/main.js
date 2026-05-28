@@ -1095,7 +1095,7 @@ async function start() {
 
   // Load default ocean video
   const defaultVideo = document.createElement('video');
-  defaultVideo.src = 'default_ocean.mp4';
+  defaultVideo.src = '5668625-hd_1366_720_30fps.mp4';
   defaultVideo.loop = true;
   defaultVideo.muted = true;
   defaultVideo.playsInline = true;
