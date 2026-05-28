@@ -224,6 +224,22 @@ function render() {
   const windY = (Math.cos(t * 0.7) - 0.5) * 0.04;
   updatePhysics(cloth, grabbedIndices, windX, windY);
 
+  // --- Diagnostics: log top-row positions once per second ---
+  if (!cloth._diagTime || performance.now() - cloth._diagTime > 1000) {
+    cloth._diagTime = performance.now();
+    const top = cloth.points.slice(0, cloth.cols);
+    const xs = top.map(p => p.x.toFixed(0)).join(',');
+    const origXs = top.map(p => p.origX.toFixed(0)).join(',');
+    const spacing = [];
+    for (let i = 1; i < top.length; i++) {
+      spacing.push((top[i].x - top[i-1].x).toFixed(0));
+    }
+    console.log('mode=' + cloth.mode, 'grabs=' + grabbedIndices.length);
+    console.log('  topX: [' + xs + ']');
+    console.log('  origX: [' + origXs + ']');
+    console.log('  gaps: [' + spacing.join(',') + ']');
+  }
+
   // Draw
   gl.clearColor(0, 0, 0, 1);
   gl.clear(gl.COLOR_BUFFER_BIT);

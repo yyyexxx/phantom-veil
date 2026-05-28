@@ -41,10 +41,10 @@ export function createCloth(width, height, config = {}) {
   for (let y = 0; y < rows; y++) {
     for (let x = 0; x < cols; x++) {
       const idx = y * cols + x;
-      if (x < cols - 1) {
-        // Top-row horizontal: very weak (allows clustering)
-        const stiff = y === 0 ? 0.01 : cfg.stiffness;
-        sticks.push({ p0: idx, p1: idx + 1, len: spacingX, stiffness: stiff });
+      // Top row has NO horizontal sticks — vertices slide freely on the rod.
+      // Prevent crossing via rail order enforcement after constraint relaxation.
+      if (x < cols - 1 && y > 0) {
+        sticks.push({ p0: idx, p1: idx + 1, len: spacingX, stiffness: cfg.stiffness });
       }
       if (y < rows - 1) {
         sticks.push({ p0: idx, p1: idx + cols, len: spacingY, stiffness: cfg.stiffness });
@@ -137,6 +137,18 @@ export function updatePhysics(cloth, grabbedIndices, windX = 0, windY = 0) {
     p.oldX = p.x; p.oldY = p.y;
     p.x += vx + windX + rx;
     p.y += vy + windY + ry + cfg.gravity;
+  }
+
+  // --- Enforce rail vertex order (no crossing, but clustering allowed) ---
+  for (let i = 1; i < cloth.cols; i++) {
+    const prev = points[i - 1];
+    const curr = points[i];
+    // If vertices crossed, push them apart to minimum gap of 2px
+    if (curr.x < prev.x + 2) {
+      const mid = (prev.x + curr.x) / 2;
+      prev.x = mid - 1;
+      curr.x = mid + 1;
+    }
   }
 
   // --- Stick constraint relaxation ---
