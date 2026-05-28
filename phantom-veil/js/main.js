@@ -607,11 +607,11 @@ async function start() {
     const cx = 0;
     const cy = 0;
     cloth = createCloth(clothW, clothH, {
-      cols: 76,
-      rows: 70,
+      cols: 50,
+      rows: 46,
       gravity: 0.08,
       friction: 0.94,
-      stiffness: 0.8,
+      stiffness: 0.6,
       restoreForce: 0.0015,
       iterations: 12,
       railFriction: 0.94,

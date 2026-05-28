@@ -3,8 +3,8 @@
 // can cluster freely, resist movement from cloth tension.
 
 export const DEFAULT_CONFIG = {
-  cols: 76,
-  rows: 70,
+  cols: 50,
+  rows: 46,
   gravity: 0.10,
   friction: 0.92,
   stiffness: 0.35,
