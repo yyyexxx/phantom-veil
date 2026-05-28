@@ -22,9 +22,7 @@ let animationId = null;
 let cloth = null;
 let mouseX = 0, mouseY = 0, mouseDown = false;
 let mouseGrabbedIdx = null;
-let currentMode = 2; // 0=stress 1=wire 2=edge 3=hue (default: edge glow)
 let showDebugGrid = true; // G to toggle
-const modeNames = ['Stress', 'Wireframe', 'Edge Glow', 'Hue Shift'];
 const handTracker = createHandTracker(canvas);
 
 // --- Shaders ---
@@ -45,78 +43,33 @@ uniform sampler2D u_webcam;
 uniform sampler2D u_clothData;
 uniform float u_mirror;
 uniform vec2 u_clothTexSize;
-uniform float u_time;
-uniform int u_mode; // 0=stress 1=wire 2=edge 3=hue
-
-vec2 getDisp(vec2 uv) {
-  vec4 s = texture2D(u_clothData, uv);
-  return (s.rg - 0.5) * 2.0;
-}
-
-// Absolute displacement magnitude at this point
-float getMag(vec2 uv) {
-  return clamp(length(getDisp(uv)), 0.0, 1.0);
-}
-
-// Local stress: how much displacement changes between neighbors
-float getStress(vec2 uv) {
-  vec2 step = 1.0 / u_clothTexSize;
-  vec2 d0 = getDisp(uv);
-  vec2 dl = getDisp(uv - vec2(step.x, 0.0));
-  vec2 dr = getDisp(uv + vec2(step.x, 0.0));
-  vec2 du = getDisp(uv - vec2(0.0, step.y));
-  vec2 dd = getDisp(uv + vec2(0.0, step.y));
-  return clamp(length(dr - dl) + length(dd - du), 0.0, 1.0);
-}
-
-float isEdge(vec2 uv) {
-  vec2 step = 1.0 / u_clothTexSize;
-  float s0 = getStress(uv);
-  float sl = getStress(uv - vec2(step.x, 0.0));
-  float sr = getStress(uv + vec2(step.x, 0.0));
-  float su = getStress(uv - vec2(0.0, step.y));
-  float sd = getStress(uv + vec2(0.0, step.y));
-  return clamp((abs(s0 - sl) + abs(s0 - sr) + abs(s0 - su) + abs(s0 - sd)) * 5.0, 0.0, 1.0);
-}
 
 void main() {
   vec2 uv = v_texCoord;
-  // Sample cloth data at ORIGINAL uv (before mirror), so it aligns with cloth positions
-  float mag = getMag(uv);
-  float stress = getStress(uv);
-  float edge = isEdge(uv);
+  vec4 clothSample = texture2D(u_clothData, uv);
 
-  // Mirror for webcam display
+  // Mirror for webcam
   vec2 webcamUV = uv;
   if (u_mirror > 0.5) webcamUV.x = 1.0 - webcamUV.x;
-  vec4 color = texture2D(u_webcam, webcamUV);
 
-  // Intensity = max of absolute displacement and local stress
-  float intensity = max(mag * 0.8, stress);
+  float isBack = clothSample.b; // B channel = flip flag from JS
 
-  if (u_mode == 0) {
-    // A: Stress heatmap
-    color.rgb = mix(color.rgb, color.rgb * 0.6, intensity * 0.4);
-    color.rgb += vec3(0.12, 0.14, 0.2) * intensity;
-  } else if (u_mode == 1) {
-    // B: Wireframe
-    vec2 grid = fract(uv * u_clothTexSize);
-    float line = 1.0 - step(0.04, grid.x) * step(0.04, grid.y);
-    float glow = line * (0.03 + intensity * 0.2);
-    color.rgb += glow * 0.7;
-  } else if (u_mode == 2) {
-    // C: Edge glow
-    float halo = edge * (0.06 + intensity * 0.25);
-    color.rgb += vec3(0.5, 0.7, 1.0) * halo;
+  if (isBack > 0.5) {
+    // Back face: dark red velvet
+    float noise = fract(sin(dot(uv * 50.0, vec2(12.9898, 78.233))) * 43758.5453);
+    vec3 dark  = vec3(0.35, 0.02, 0.03);
+    vec3 rich  = vec3(0.50, 0.04, 0.05);
+    gl_FragColor = vec4(mix(dark, rich, noise), 1.0);
   } else {
-    // D: Hue shift
-    float tint = 0.02 + intensity * 0.06;
-    color.r = mix(color.r, color.r * 0.9, tint);
-    color.g = mix(color.g, color.g * 0.93, tint * 0.7);
-    color.b = mix(color.b, color.b * 1.1, tint);
+    // Front face: webcam with subtle linen weave
+    vec4 color = texture2D(u_webcam, webcamUV);
+    float warp = abs(sin(uv.x * 300.0 + uv.y * 3.0));
+    float weft = abs(sin(uv.y * 280.0 + uv.x * 2.0));
+    float weave = smoothstep(0.3, 0.7, warp * 0.6 + weft * 0.4) * 0.06;
+    color.rgb = mix(color.rgb, color.rgb * 0.94, weave);
+    color.rgb += weave * 0.04;
+    gl_FragColor = color;
   }
-
-  gl_FragColor = color;
 }`;
 
 // Glass frag: revealed area placeholder
@@ -310,12 +263,32 @@ function updateClothDataTexture(cloth) {
   const h = cloth.rows;
   const data = new Uint8Array(w * h * 4);
 
+  // Encode displacement in R,G channels
   for (let i = 0; i < cloth.points.length; i++) {
     const p = cloth.points[i];
     data[i * 4]     = Math.round(((p.x - p.origX) / cloth.width + 0.5) * 255);
     data[i * 4 + 1] = Math.round(((p.y - p.origY) / cloth.height + 0.5) * 255);
     data[i * 4 + 2] = 0;
     data[i * 4 + 3] = 255;
+  }
+
+  // Detect flipped quads → store in B channel of all 4 vertices
+  const { cols, rows, points } = cloth;
+  for (let y = 0; y < rows - 1; y++) {
+    for (let x = 0; x < cols - 1; x++) {
+      const tl = points[y * cols + x];
+      const tr = points[y * cols + x + 1];
+      const bl = points[(y + 1) * cols + x];
+      // Cross product of diagonals: negative = flipped (back face)
+      const cross = (tr.x - tl.x) * (bl.y - tl.y) - (tr.y - tl.y) * (bl.x - tl.x);
+      if (cross < 0) {
+        // Mark all 4 vertices of this quad as back face
+        data[(y * cols + x) * 4 + 2] = 255;
+        data[(y * cols + x + 1) * 4 + 2] = 255;
+        data[((y + 1) * cols + x) * 4 + 2] = 255;
+        data[((y + 1) * cols + x + 1) * 4 + 2] = 255;
+      }
+    }
   }
 
   gl.bindTexture(gl.TEXTURE_2D, clothDataTexture);
@@ -448,8 +421,6 @@ function render() {
   gl.uniform1i(gl.getUniformLocation(veilProg, 'u_clothData'), 1);
   gl.uniform2f(gl.getUniformLocation(veilProg, 'u_clothTexSize'), cloth.cols, cloth.rows);
   gl.uniform1f(gl.getUniformLocation(veilProg, 'u_time'), performance.now() * 0.001);
-  gl.uniform1i(gl.getUniformLocation(veilProg, 'u_mode'), currentMode);
-
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, webcamTexture);
   gl.activeTexture(gl.TEXTURE1);
@@ -501,7 +472,6 @@ function render() {
   const ratio = getClusteringRatio(cloth);
   const gridStatus = showDebugGrid ? 'ON' : 'OFF';
   document.getElementById('debug-info').innerText =
-    `Cluster: ${(ratio*100).toFixed(0)}% | Grid: ${gridStatus} | [${modeNames[currentMode]}] 1-4 G R`;
 
   // Debug: hand positions as dots
   if (showDebugGrid && hands.length > 0) {
@@ -630,18 +600,9 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'r' || e.key === 'R') {
     resetCloth(cloth);
     document.getElementById('debug-info').innerText =
-      'Cluster: 0% | Mode: ' + modeNames[currentMode] + ' | Reset done';
   }
-  if (e.key === '1') currentMode = 0;
-  if (e.key === '2') currentMode = 1;
-  if (e.key === '3') currentMode = 2;
-  if (e.key === '4') currentMode = 3;
   if (e.key === 'g' || e.key === 'G') {
     showDebugGrid = !showDebugGrid;
-  }
-  if (e.key >= '1' && e.key <= '4') {
-    document.getElementById('debug-info').innerText =
-      'Mode: ' + modeNames[currentMode] + ' (1-4 switch, G grid)';
   }
 });
 
