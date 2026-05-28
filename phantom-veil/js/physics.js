@@ -91,14 +91,20 @@ export function updatePhysics(cloth, grabbedIndices, windX = 0, windY = 0) {
   const hasGrabs = grabbedIndices.length > 0;
 
   // --- Mode detection ---
+  // Track grab start position for displacement-based open detection
+  if (hasGrabs && !cloth._wasGrabbing) {
+    // Grab just started — anchor the grab start X
+    cloth._grabStartX = points[grabbedIndices[0]].x;
+  }
+  cloth._wasGrabbing = hasGrabs;
+
   if (cloth.mode === 'closed' && hasGrabs) {
     cloth.mode = 'peek';
   }
-  if (cloth.mode !== 'open') {
+  if (cloth.mode === 'peek' && cloth._grabStartX !== undefined) {
     for (const gi of grabbedIndices) {
-      if (Math.abs(points[gi].x - points[gi].origX) > cfg.openThreshold) {
+      if (Math.abs(points[gi].x - cloth._grabStartX) > cfg.openThreshold) {
         cloth.mode = 'open';
-        // Lock all rail vertices at current X as new origin (no restore)
         for (let i = 0; i < cloth.cols; i++) {
           points[i].origX = points[i].x;
         }
@@ -178,6 +184,8 @@ export function updatePhysics(cloth, grabbedIndices, windX = 0, windY = 0) {
 
 export function resetCloth(cloth) {
   cloth.mode = 'closed';
+  cloth._wasGrabbing = false;
+  cloth._grabStartX = undefined;
   for (let y = 0; y < cloth.rows; y++) {
     for (let x = 0; x < cloth.cols; x++) {
       const i = y * cloth.cols + x;
