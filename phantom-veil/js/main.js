@@ -370,6 +370,7 @@ async function start() {
       friction: 0.94,
       stiffness: 0.35,
       restoreForce: 0.0005,
+      openThreshold: 200,
     });
     for (const p of cloth.points) {
       p.x += cx; p.y += cy;
