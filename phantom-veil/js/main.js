@@ -393,11 +393,19 @@ function render() {
   }
 
   // Physics step
-  // Auto-stack: on release from orange state, complete the opening
+  // Cancel auto-stack on grab
+  if (grabbedIndices.length > 0 && cloth._autoStacking) {
+    cloth._autoStacking = false;
+    cloth._stackVel = null;
+  }
+
+  // On release: blue → slow restore, orange → auto-stack
   const wasGrabbing = cloth._wasGrabbing;
   cloth._wasGrabbing = grabbedIndices.length > 0;
 
-  if (!grabbedIndices.length && wasGrabbing && getClusteringRatio(cloth) > 0.3) {
+  if (!grabbedIndices.length && wasGrabbing && !cloth._autoStacking) {
+    const ratio = getClusteringRatio(cloth);
+    if (ratio > 0.3) {
     // Released while partially open → auto-stack entire cloth to nearest side
     const top = cloth.points.slice(0, cloth.cols);
     const midX = cloth.width / 2;
