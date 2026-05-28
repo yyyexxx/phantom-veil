@@ -119,19 +119,35 @@ void main() {
   gl_FragColor = color;
 }`;
 
-// Glass frag: revealed area placeholder
+// Glass frag: hidden content with refraction + reflection
 const glassFrag = /* glsl */ `
 precision mediump float;
 uniform vec2 u_resolution;
+uniform sampler2D u_webcam;
+uniform float u_mirror;
 void main() {
   vec2 uv = gl_FragCoord.xy / u_resolution;
+
+  // Refraction: 2-3px subtle UV offset (simulate glass pane)
+  float rx = sin(uv.y * 200.0) * 0.0006;
+  float ry = cos(uv.x * 180.0) * 0.0004;
+  vec2 refrUV = uv + vec2(rx, ry);
+
+  // Hidden content: ocean gradient at refracted UV
   vec3 top    = vec3(0.04, 0.22, 0.50);
   vec3 bottom = vec3(0.01, 0.12, 0.30);
-  vec3 ocean = mix(top, bottom, uv.y);
-  // subtle light caustics
-  float ray = sin(uv.x * 40.0 + uv.y * 15.0) * sin(uv.y * 35.0 - uv.x * 10.0);
+  vec3 ocean = mix(top, bottom, refrUV.y);
+  float ray = sin(refrUV.x * 40.0 + refrUV.y * 15.0) * sin(refrUV.y * 35.0 - refrUV.x * 10.0);
   ocean += ray * 0.04;
-  gl_FragColor = vec4(ocean, 1.0);
+
+  // Reflection: webcam blended at 12% (see yourself in the glass)
+  vec2 camUV = uv;
+  if (u_mirror > 0.5) camUV.x = 1.0 - camUV.x;
+  vec3 cam = texture2D(u_webcam, camUV).rgb;
+
+  vec3 color = mix(ocean, cam, 0.12);
+
+  gl_FragColor = vec4(color, 1.0);
 }`;
 
 // Stencil fill: maps pixel coords to clip space (same as debug line)
@@ -527,8 +543,14 @@ function render() {
     cloth.height                               // height
   );
 
+  const mirror = handTracker.getCameraFacingMode() === 'user' ? 1.0 : 0.0;
+
   gl.useProgram(glassProg);
   gl.uniform2f(gl.getUniformLocation(glassProg, 'u_resolution'), res.w, res.h);
+  gl.uniform1i(gl.getUniformLocation(glassProg, 'u_webcam'), 0);
+  gl.uniform1f(gl.getUniformLocation(glassProg, 'u_mirror'), mirror);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, webcamTexture);
   gl.bindBuffer(gl.ARRAY_BUFFER, glassQuad.posBuf);
   gl.enableVertexAttribArray(gl.getAttribLocation(glassProg, 'a_position'));
   gl.vertexAttribPointer(gl.getAttribLocation(glassProg, 'a_position'), 2, gl.FLOAT, false, 0, 0);
