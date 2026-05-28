@@ -393,10 +393,16 @@ function render() {
   }
 
   // Physics step
-  // Cancel auto-stack on grab
+  // Cancel auto-stack on grab — reset origX to flat so cloth doesn't remember stack
   if (grabbedIndices.length > 0 && cloth._autoStacking) {
     cloth._autoStacking = false;
     cloth._stackVel = null;
+    for (let y = 0; y < cloth.rows; y++) {
+      for (let x = 0; x < cloth.cols; x++) {
+        const i = y * cloth.cols + x;
+        cloth.points[i].origX = x * cloth.spacingX;
+      }
+    }
   }
 
   // On release: blue → slow restore, orange → auto-stack
@@ -417,14 +423,12 @@ function render() {
     }
     const stackRight = rightCount > leftCount;
     const edgeX = stackRight ? cloth.width - 5 : 5;
-    const gap = 2;
-    const { cols, rows } = cloth;
 
     // Move ALL cloth vertices' origX toward the stack edge
     for (let y = 0; y < rows; y++) {
       // Stack narrows slightly toward bottom (natural curtain drape)
       const rowT = y / (rows - 1); // 0 at top, 1 at bottom
-      const spread = 180 - rowT * 120; // ~180px at rail, tapers to ~60px at bottom
+      const spread = 180 - rowT * 80; // ~180px at rail, tapers to ~60px at bottom
       for (let x = 0; x < cols; x++) {
         const i = y * cols + x;
         const colT = x / (cols - 1); // 0 at left, 1 at right
