@@ -24,6 +24,8 @@ let mouseX = 0, mouseY = 0, mouseDown = false;
 let mouseGrabbedIdx = null;
 let currentMode = 2; // 0=stress 1=wire 2=edge 3=velvet (default: edge glow)
 let showDebugGrid = true; // G to toggle
+let showVeil = true;       // V to toggle cloth/veil
+let showGlass = true;      // F to toggle glass filter
 const modeNames = ['Stress', 'Wireframe', 'Edge Glow', 'Velvet'];
 const handTracker = createHandTracker(canvas);
 
@@ -125,28 +127,38 @@ precision mediump float;
 uniform vec2 u_resolution;
 uniform sampler2D u_webcam;
 uniform float u_mirror;
+uniform float u_showGlass; // 1.0 = glass on, 0.0 = raw ocean
 void main() {
   vec2 uv = gl_FragCoord.xy / u_resolution;
 
-  // Refraction: 2-3px subtle UV offset (simulate glass pane)
+  // Hidden content: ocean gradient
+  vec3 top    = vec3(0.04, 0.22, 0.50);
+  vec3 bottom = vec3(0.01, 0.12, 0.30);
+  vec3 ocean = mix(top, bottom, uv.y);
+  float ray = sin(uv.x * 40.0 + uv.y * 15.0) * sin(uv.y * 35.0 - uv.x * 10.0);
+  ocean += ray * 0.04;
+
+  if (u_showGlass < 0.5) {
+    gl_FragColor = vec4(ocean, 1.0);
+    return;
+  }
+
+  // Refraction: 2-3px subtle UV offset
   float rx = sin(uv.y * 200.0) * 0.0006;
   float ry = cos(uv.x * 180.0) * 0.0004;
   vec2 refrUV = uv + vec2(rx, ry);
 
-  // Hidden content: ocean gradient at refracted UV
-  vec3 top    = vec3(0.04, 0.22, 0.50);
-  vec3 bottom = vec3(0.01, 0.12, 0.30);
-  vec3 ocean = mix(top, bottom, refrUV.y);
-  float ray = sin(refrUV.x * 40.0 + refrUV.y * 15.0) * sin(refrUV.y * 35.0 - refrUV.x * 10.0);
-  ocean += ray * 0.04;
+  // Re-sample ocean at refracted UV
+  vec3 refrOcean = mix(top, bottom, refrUV.y);
+  float ray2 = sin(refrUV.x * 40.0 + refrUV.y * 15.0) * sin(refrUV.y * 35.0 - refrUV.x * 10.0);
+  refrOcean += ray2 * 0.04;
 
-  // Reflection: webcam blended at 12% (see yourself in the glass)
+  // Reflection: webcam blended at 12%
   vec2 camUV = uv;
   if (u_mirror > 0.5) camUV.x = 1.0 - camUV.x;
   vec3 cam = texture2D(u_webcam, camUV).rgb;
 
-  vec3 color = mix(ocean, cam, 0.12);
-
+  vec3 color = mix(refrOcean, cam, 0.12);
   gl_FragColor = vec4(color, 1.0);
 }`;
 
@@ -549,6 +561,7 @@ function render() {
   gl.uniform2f(gl.getUniformLocation(glassProg, 'u_resolution'), res.w, res.h);
   gl.uniform1i(gl.getUniformLocation(glassProg, 'u_webcam'), 0);
   gl.uniform1f(gl.getUniformLocation(glassProg, 'u_mirror'), mirror);
+  gl.uniform1f(gl.getUniformLocation(glassProg, 'u_showGlass'), showGlass ? 1.0 : 0.0);
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, webcamTexture);
   gl.bindBuffer(gl.ARRAY_BUFFER, glassQuad.posBuf);
@@ -592,6 +605,7 @@ function render() {
   gl.drawArrays(gl.TRIANGLES, 0, stencilCount / 2);
 
   // --- Pass 3: Veil shader (only where stencil == 1, scissored to cloth bounds) ---
+  if (showVeil) {
   gl.stencilFunc(gl.EQUAL, 1, 0xFF);
   gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
   gl.colorMask(true, true, true, true);
@@ -626,6 +640,7 @@ function render() {
   gl.vertexAttribPointer(quad.texLoc, 2, gl.FLOAT, false, 0, 0);
   gl.drawArrays(gl.TRIANGLES, 0, 6);
   gl.disable(gl.SCISSOR_TEST);
+  }
 
   // --- Pass 4: Cloth perimeter binding (包边) ---
   gl.useProgram(stencilProg);
@@ -660,7 +675,7 @@ function render() {
   const clusterRatio = getClusteringRatio(cloth);
   const gridStatus = showDebugGrid ? 'ON' : 'OFF';
   document.getElementById('debug-info').innerText =
-    `Cluster: ${(clusterRatio*100).toFixed(0)}% | Grid: ${gridStatus} | [${modeNames[currentMode]}] 1-4 G R`;
+    `Cluster: ${(clusterRatio*100).toFixed(0)}% | Grid:${gridStatus} V:${showVeil?'on':'off'} F:${showGlass?'on':'off'} | [${modeNames[currentMode]}] 1-4 G V F R`;
 
   // Debug: hand positions as dots
   if (showDebugGrid && hands.length > 0) {
@@ -795,6 +810,12 @@ window.addEventListener('keydown', (e) => {
   if (e.key === '4') currentMode = 3;
   if (e.key === 'g' || e.key === 'G') {
     showDebugGrid = !showDebugGrid;
+  }
+  if (e.key === 'v' || e.key === 'V') {
+    showVeil = !showVeil;
+  }
+  if (e.key === 'f' || e.key === 'F') {
+    showGlass = !showGlass;
   }
   if (e.key >= '1' && e.key <= '4') {
     document.getElementById('debug-info').innerText =
