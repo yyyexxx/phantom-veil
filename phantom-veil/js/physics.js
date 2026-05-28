@@ -1,19 +1,17 @@
 // --- Phantom Veil — Physics Engine ---
-// Ring-driven rail + Verlet cloth for silk-like fabric
+// Top-row vertices ARE the rings — they slide freely on the rod (Y=0, X free).
+// Cloth hangs from them via regular stick constraints.
 
 export const DEFAULT_CONFIG = {
   cols: 38,
   rows: 35,
   gravity: 0.10,
   friction: 0.92,
-  stiffness: 0.65,        // silk: resists stretch
-  restoreForce: 0.0,       // silk: no memory of original shape
+  stiffness: 0.35,
+  restoreForce: 0.0,
   iterations: 6,
   interactionRadius: 150,
-  openThreshold: 40,
-  ringCount: 8,            // number of curtain rings on the rod
-  ringRadius: 18,          // ring size (min spacing between rings)
-  ringDriveForce: 1.0,     // how strongly hand pull drives the rings
+  openThreshold: 50,
 };
 
 export function createCloth(width, height, config = {}) {
@@ -23,19 +21,6 @@ export function createCloth(width, height, config = {}) {
   const spacingX = width / (cols - 1);
   const spacingY = height / (rows - 1);
 
-  // --- Rings (curtain rod) ---
-  const ringCount = cfg.ringCount;
-  const ringSpacing = width / (ringCount - 1);
-  const rings = [];
-  for (let i = 0; i < ringCount; i++) {
-    rings.push({
-      x: i * ringSpacing,      // current X on the rod
-      origX: i * ringSpacing,  // original X (for reset)
-      y: 0,                    // rod height
-    });
-  }
-
-  // --- Cloth points ---
   const points = [];
   const sticks = [];
 
@@ -47,42 +32,28 @@ export function createCloth(width, height, config = {}) {
         x: px, y: py,
         oldX: px, oldY: py,
         origX: px, origY: py,
-        pinned: false,
-        ringIdx: -1,
+        railPinned: y === 0, // top row = curtain rod (Y locked, X slides freely)
       });
     }
   }
 
-  // --- Sticks (cloth grid) ---
+  // Grid sticks
   for (let y = 0; y < rows; y++) {
     for (let x = 0; x < cols; x++) {
       const idx = y * cols + x;
-      // Skip horizontal sticks on top row — it's ring-driven, not constraint-driven
-      if (x < cols - 1 && y > 0) {
-        sticks.push({ p0: idx, p1: idx + 1, len: spacingX });
+      if (x < cols - 1) {
+        // Top-row horizontal: very weak (allows clustering)
+        const stiff = y === 0 ? 0.01 : cfg.stiffness;
+        sticks.push({ p0: idx, p1: idx + 1, len: spacingX, stiffness: stiff });
       }
       if (y < rows - 1) {
-        sticks.push({ p0: idx, p1: idx + cols, len: spacingY });
+        sticks.push({ p0: idx, p1: idx + cols, len: spacingY, stiffness: cfg.stiffness });
       }
     }
-  }
-
-  // --- Map top-row vertices to nearest ring ---
-  for (let x = 0; x < cols; x++) {
-    const clothIdx = x;
-    const px = x * spacingX;
-    let bestRing = 0;
-    let bestDist = Infinity;
-    for (let r = 0; r < ringCount; r++) {
-      const d = Math.abs(px - rings[r].x);
-      if (d < bestDist) { bestDist = d; bestRing = r; }
-    }
-    points[clothIdx].ringIdx = bestRing;
   }
 
   return {
-    points, sticks, rings,
-    cols, rows,
+    points, sticks, cols, rows,
     spacingX, spacingY,
     baseX: 0, baseY: 0,
     width, height,
@@ -106,7 +77,7 @@ export function findClosestPoint(cloth, sx, sy, radius) {
   let minDistSq = radius * radius;
   for (let i = 0; i < cloth.points.length; i++) {
     const p = cloth.points[i];
-    if (p.pinned) continue;
+    if (p.railPinned) continue; // don't grab rail vertices directly
     const dx = p.x - sx, dy = p.y - sy;
     const dSq = dx * dx + dy * dy;
     if (dSq < minDistSq) { minDistSq = dSq; closest = i; }
@@ -115,63 +86,9 @@ export function findClosestPoint(cloth, sx, sy, radius) {
 }
 
 export function updatePhysics(cloth, grabbedIndices, windX = 0, windY = 0) {
-  const { points, sticks, rings, cols, cfg } = cloth;
+  const { points, sticks, cfg } = cloth;
   const grabbed = new Set(grabbedIndices);
   const hasGrabs = grabbedIndices.length > 0;
-
-  // --- Ring drive ---
-  // Only rings between the grab's origin X and the grab's current X are pushed.
-  // This simulates: pulling fabric to the right pushes the rings in between.
-  if (hasGrabs) {
-    for (let r = 0; r < rings.length; r++) {
-      const ring = rings[r];
-      let totalPush = 0;
-
-      for (const gi of grabbedIndices) {
-        const gp = points[gi];
-        const grabFrom = gp.origX;
-        const grabTo = gp.x;
-        const ringOrig = ring.origX;
-
-        // Ring is pushed only if it lies between grab origin and grab target
-        if (grabTo > grabFrom && ringOrig >= grabFrom && ringOrig <= grabTo) {
-          // Pulling right: rings between grabFrom and grabTo get compressed toward grabTo
-          const t = (ringOrig - grabFrom) / Math.max(1, grabTo - grabFrom);
-          const targetX = grabFrom + t * grabTo;
-          totalPush += (targetX - ring.x) * 0.3;
-        } else if (grabTo < grabFrom && ringOrig >= grabTo && ringOrig <= grabFrom) {
-          // Pulling left: rings between grabTo and grabFrom get compressed toward grabTo
-          const t = (ringOrig - grabTo) / Math.max(1, grabFrom - grabTo);
-          const targetX = grabTo + t * (grabFrom - grabTo);
-          totalPush += (targetX - ring.x) * 0.3;
-        }
-      }
-
-      ring.x += totalPush;
-    }
-  }
-
-  // --- Ring constraints ---
-  // Rings can't pass each other → enforce minimum spacing
-  for (let r = 1; r < rings.length; r++) {
-    const gap = rings[r].x - rings[r - 1].x;
-    if (gap < cfg.ringRadius) {
-      const push = (cfg.ringRadius - gap) / 2;
-      rings[r].x += push;
-      rings[r - 1].x -= push;
-    }
-  }
-  // Soft boundary — rings can go slightly past edges
-  for (const ring of rings) {
-    ring.x = Math.max(-50, Math.min(cloth.width + 50, ring.x));
-  }
-
-  // --- Weak ring restore (when no grabs) ---
-  if (!hasGrabs && cloth.mode !== 'open') {
-    for (const ring of rings) {
-      ring.x += (ring.origX - ring.x) * 0.001; // very slow drift back
-    }
-  }
 
   // --- Mode detection ---
   if (cloth.mode === 'closed' && hasGrabs) {
@@ -181,9 +98,9 @@ export function updatePhysics(cloth, grabbedIndices, windX = 0, windY = 0) {
     for (const gi of grabbedIndices) {
       if (Math.abs(points[gi].x - points[gi].origX) > cfg.openThreshold) {
         cloth.mode = 'open';
-        // Lock rings at current position
-        for (const ring of rings) {
-          ring.origX = ring.x;
+        // Lock all rail vertices at current X as new origin (no restore)
+        for (let i = 0; i < cloth.cols; i++) {
+          points[i].origX = points[i].x;
         }
         break;
       }
@@ -193,45 +110,33 @@ export function updatePhysics(cloth, grabbedIndices, windX = 0, windY = 0) {
     cloth.mode = 'closed';
   }
 
-  // --- Update cloth top row from rings (interpolated) ---
-  // Each top-row vertex is placed smoothly between its two nearest rings.
-  // Skip vertices currently being grabbed — hand position takes priority.
-  for (let x = 0; x < cols; x++) {
-    const idx = x;
-    if (grabbed.has(idx)) continue;
-    const p = points[idx];
-    const px = x * cloth.spacingX;
+  const isOpen = cloth.mode === 'open';
 
-    // Find two nearest rings and interpolate
-    let leftRing = rings[0], rightRing = rings[rings.length - 1];
-    for (let r = 0; r < rings.length - 1; r++) {
-      if (px >= rings[r].x && px <= rings[r + 1].x) {
-        leftRing = rings[r];
-        rightRing = rings[r + 1];
-        break;
-      }
-    }
-    // Linear interpolation between the two rings
-    const range = rightRing.x - leftRing.x;
-    const t = range > 0 ? (px - leftRing.x) / range : 0;
-    p.x = leftRing.x + t * (rightRing.x - leftRing.x);
-    p.y = 0;
-    p.oldX = p.x;
-    p.oldY = p.y;
-  }
-
-  // --- Verlet integration (free vertices) ---
+  // --- Verlet integration ---
   for (let i = 0; i < points.length; i++) {
     const p = points[i];
-    if (p.pinned || grabbed.has(i) || p.ringIdx >= 0) continue; // skip grabbed + ring-driven
+    if (p.railPinned) {
+      // Rail vertex: Y locked, X free, no gravity
+      if (grabbed.has(i)) { p.oldX = p.x; p.oldY = p.y; continue; }
+      const vx = (p.x - p.oldX) * cfg.friction;
+      p.oldX = p.x; p.oldY = p.y;
+      if (!isOpen) {
+        p.x += vx + windX + (p.origX - p.x) * 0.002;
+      } else {
+        p.x += vx + windX;
+      }
+      continue;
+    }
+
+    if (grabbed.has(i)) { p.oldX = p.x; p.oldY = p.y; continue; }
 
     const vx = (p.x - p.oldX) * cfg.friction;
     const vy = (p.y - p.oldY) * cfg.friction;
-
-    p.oldX = p.x;
-    p.oldY = p.y;
-    p.x += vx + windX;
-    p.y += vy + windY + cfg.gravity;
+    const rx = (p.origX - p.x) * cfg.restoreForce;
+    const ry = (p.origY - p.y) * cfg.restoreForce;
+    p.oldX = p.x; p.oldY = p.y;
+    p.x += vx + windX + rx;
+    p.y += vy + windY + ry + cfg.gravity;
   }
 
   // --- Stick constraint relaxation ---
@@ -246,16 +151,16 @@ export function updatePhysics(cloth, grabbedIndices, windX = 0, windY = 0) {
       if (dist === 0) continue;
 
       const diff = (s.len - dist) / dist / 2;
-      const ox = dx * diff * cfg.stiffness;
-      const oy = dy * diff * cfg.stiffness;
+      const ox = dx * diff * s.stiffness;
+      const oy = dy * diff * s.stiffness;
 
-      if (!p0.pinned && !grabbed.has(s.p0)) {
+      if (!grabbed.has(s.p0)) {
         p0.x -= ox;
-        p0.y -= oy;
+        if (!p0.railPinned) p0.y -= oy;
       }
-      if (!p1.pinned && !grabbed.has(s.p1)) {
+      if (!grabbed.has(s.p1)) {
         p1.x += ox;
-        p1.y += oy;
+        if (!p1.railPinned) p1.y += oy;
       }
     }
   }
@@ -263,11 +168,6 @@ export function updatePhysics(cloth, grabbedIndices, windX = 0, windY = 0) {
 
 export function resetCloth(cloth) {
   cloth.mode = 'closed';
-  const ringSpacing = cloth.width / (cloth.rings.length - 1);
-  for (let i = 0; i < cloth.rings.length; i++) {
-    cloth.rings[i].x = i * ringSpacing;
-    cloth.rings[i].origX = i * ringSpacing;
-  }
   for (let y = 0; y < cloth.rows; y++) {
     for (let x = 0; x < cloth.cols; x++) {
       const i = y * cloth.cols + x;
