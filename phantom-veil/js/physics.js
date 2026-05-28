@@ -119,31 +119,28 @@ export function updatePhysics(cloth, grabbedIndices, windX = 0, windY = 0) {
   const grabbed = new Set(grabbedIndices);
   const hasGrabs = grabbedIndices.length > 0;
 
-  // --- Ring drive ---
-  // When a vertex is grabbed, compute its horizontal pull and drive nearby rings
+  // --- Ring drive (absolute displacement model) ---
+  // Each ring's target = its original position + weighted grab displacement.
+  // Ring slides toward target each frame — independent of frame deltas.
   if (hasGrabs) {
-    // Compute average horizontal displacement of grabbed vertices
-    let sumDx = 0, count = 0;
-    for (const gi of grabbedIndices) {
-      const p = points[gi];
-      const dx = p.x - p.origX;
-      sumDx += dx;
-      count++;
-    }
-    const avgDx = count > 0 ? sumDx / count : 0;
+    for (let r = 0; r < rings.length; r++) {
+      const ring = rings[r];
 
-    // Drive each ring based on how close the grabbed vertex is
-    // A grabbed vertex affects all rings, with influence based on horizontal proximity
-    for (const gi of grabbedIndices) {
-      const gp = points[gi];
-      const grabScreenX = gp.x;
+      // Weighted average of all grabs' displacement, by proximity
+      let weightedDx = 0, totalWeight = 0;
+      for (const gi of grabbedIndices) {
+        const gp = points[gi];
+        const grabDx = gp.x - gp.origX; // absolute displacement from original
+        const dist = Math.abs(ring.origX - gp.origX);
+        const w = Math.exp(-(dist * dist) / (2 * 200 * 200));
+        weightedDx += grabDx * w;
+        totalWeight += w;
+      }
 
-      for (let r = 0; r < rings.length; r++) {
-        const ring = rings[r];
-        const dist = Math.abs(ring.x - grabScreenX);
-        // Gaussian falloff: closer rings get more drive
-        const influence = Math.exp(-(dist * dist) / (2 * 150 * 150));
-        ring.x += (gp.x - gp.oldX) * influence * cfg.ringDriveForce;
+      if (totalWeight > 0) {
+        const targetX = ring.origX + weightedDx / totalWeight;
+        // Smooth follow — rings don't jump, they slide
+        ring.x += (targetX - ring.x) * 0.3;
       }
     }
   }
