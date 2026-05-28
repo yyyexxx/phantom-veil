@@ -462,23 +462,11 @@ function render() {
   gl.vertexAttribPointer(stencilPosLoc, 2, gl.FLOAT, false, 0, 0);
   gl.drawArrays(gl.TRIANGLES, 0, stencilCount / 2);
 
+  // Re-enable color output for glass pass
+  gl.colorMask(true, true, true, true);
+
   // --- Pass 2: Glass (hidden content) at cloth bounds ---
   const gx = cloth.baseX, gy = cloth.baseY, gw = cloth.width, gh = cloth.height;
-  const gVerts = new Float32Array([
-    gx, gy,  gx+gw, gy,  gx, gy+gh,
-    gx, gy+gh,  gx+gw, gy,  gx+gw, gy+gh,
-  ]);
-  gl.bindBuffer(gl.ARRAY_BUFFER, glassRectBuf);
-  gl.bufferData(gl.ARRAY_BUFFER, gVerts, gl.STATIC_DRAW);
-
-  gl.useProgram(stencilProg);
-  gl.uniform2f(gl.getUniformLocation(stencilProg, 'u_resolution'), res.w, res.h);
-  gl.uniform3f(gl.getUniformLocation(stencilProg, 'u_color'), 0, 0, 0);
-  gl.bindBuffer(gl.ARRAY_BUFFER, glassRectBuf);
-  gl.enableVertexAttribArray(stencilPosLoc);
-  gl.vertexAttribPointer(stencilPosLoc, 2, gl.FLOAT, false, 0, 0);
-
-  // Scissor to cloth bounds
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   gl.enable(gl.SCISSOR_TEST);
   gl.scissor(gx / dpr, (canvas.height - (gy + gh) / dpr), gw / dpr, gh / dpr);
