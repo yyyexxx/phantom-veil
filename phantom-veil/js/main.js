@@ -110,13 +110,10 @@ void main() {
     color.rgb += vec3(0.5, 0.7, 1.0) * halo;
   } else {
     // D: Solid red velvet curtain
-    float n1 = fract(sin(dot(uv * 15.0, vec2(12.9898, 78.233))) * 43758.5453);
-    float n2 = fract(sin(dot(uv * 23.0, vec2(93.131, 47.519))) * 65719.771);
-    float noise = n1 * 0.7 + n2 * 0.3;
-    vec3 dark  = vec3(0.25, 0.02, 0.03);
-    vec3 mid   = vec3(0.45, 0.04, 0.06);
-    vec3 light = vec3(0.55, 0.06, 0.08);
-    color.rgb = mix(dark, mix(mid, light, n2), noise);
+    float noise = fract(sin(dot(uv * 80.0, vec2(12.9898, 78.233))) * 43758.5453);
+    vec3 dark  = vec3(0.28, 0.02, 0.03);
+    vec3 mid   = vec3(0.42, 0.03, 0.05);
+    color.rgb = mix(dark, mid, noise);
   }
 
   gl_FragColor = color;
@@ -128,15 +125,12 @@ precision mediump float;
 uniform vec2 u_resolution;
 void main() {
   vec2 uv = gl_FragCoord.xy / u_resolution;
-  vec3 top    = vec3(0.05, 0.2, 0.45);
-  vec3 mid    = vec3(0.02, 0.35, 0.55);
-  vec3 bottom = vec3(0.01, 0.15, 0.35);
-  float t = smoothstep(0.0, 0.4, uv.y) * (1.0 - smoothstep(0.6, 1.0, uv.y));
-  vec3 ocean = mix(top, mid, uv.y);
-  ocean = mix(ocean, bottom, smoothstep(0.7, 1.0, uv.y));
-  // Subtle light rays
-  float ray = sin(uv.x * 30.0 + uv.y * 10.0) * 0.5 + 0.5;
-  ocean += ray * 0.03;
+  vec3 top    = vec3(0.04, 0.22, 0.50);
+  vec3 bottom = vec3(0.01, 0.12, 0.30);
+  vec3 ocean = mix(top, bottom, uv.y);
+  // subtle light caustics
+  float ray = sin(uv.x * 40.0 + uv.y * 15.0) * sin(uv.y * 35.0 - uv.x * 10.0);
+  ocean += ray * 0.04;
   gl_FragColor = vec4(ocean, 1.0);
 }`;
 
@@ -277,7 +271,6 @@ let stencilCount = 0;
 let debugBuf = null;
 let debugF32 = null;
 let debugCount = 0;
-let glassRectBuf = null;       // persistent glass rectangle buffer
 let edgeBuf = null;            // persistent edge (包边) buffer
 let edgeF32 = null;
 let dotBuf = null;             // persistent hand dot buffer
@@ -335,9 +328,6 @@ function createClothDataTexture(cloth) {
   dotBuf = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, dotBuf);
   gl.bufferData(gl.ARRAY_BUFFER, dotF32.byteLength, gl.DYNAMIC_DRAW);
-
-  // Glass rectangle at cloth bounds (for hidden content)
-  glassRectBuf = gl.createBuffer();
 
   clothDataTexture = gl.createTexture();
   gl.bindTexture(gl.TEXTURE_2D, clothDataTexture);
@@ -428,10 +418,30 @@ function render() {
   updateClothDataTexture(cloth);
 
   // Draw
-  gl.clearColor(0.01, 0.02, 0.05, 1);
+  gl.clearColor(0, 0, 0, 1);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
 
-  // --- Pass 1: Stencil — draw cloth grid ---
+  // --- Pass 1: Glass (hidden content) scissored to cloth bounds ---
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const gx = cloth.baseX / dpr;
+  const gy = (canvas.height - (cloth.baseY + cloth.height) / dpr);
+  const gw = cloth.width / dpr;
+  const gh = cloth.height / dpr;
+  gl.enable(gl.SCISSOR_TEST);
+  gl.scissor(gx, gy, gw, gh);
+
+  gl.useProgram(glassProg);
+  gl.uniform2f(gl.getUniformLocation(glassProg, 'u_resolution'), res.w, res.h);
+  gl.bindBuffer(gl.ARRAY_BUFFER, glassQuad.posBuf);
+  gl.enableVertexAttribArray(gl.getAttribLocation(glassProg, 'a_position'));
+  gl.vertexAttribPointer(gl.getAttribLocation(glassProg, 'a_position'), 2, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, glassQuad.texBuf);
+  gl.enableVertexAttribArray(gl.getAttribLocation(glassProg, 'a_texCoord'));
+  gl.vertexAttribPointer(gl.getAttribLocation(glassProg, 'a_texCoord'), 2, gl.FLOAT, false, 0, 0);
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+  gl.disable(gl.SCISSOR_TEST);
+
+  // --- Pass 2: Stencil — draw cloth grid ---
   gl.enable(gl.STENCIL_TEST);
   gl.stencilFunc(gl.ALWAYS, 1, 0xFF);
   gl.stencilOp(gl.KEEP, gl.KEEP, gl.REPLACE);
@@ -462,17 +472,6 @@ function render() {
   gl.vertexAttribPointer(stencilPosLoc, 2, gl.FLOAT, false, 0, 0);
   gl.drawArrays(gl.TRIANGLES, 0, stencilCount / 2);
 
-  // --- Pass 2: Glass (hidden content) full screen ---
-  gl.useProgram(glassProg);
-  gl.uniform2f(gl.getUniformLocation(glassProg, 'u_resolution'), res.w, res.h);
-  gl.bindBuffer(gl.ARRAY_BUFFER, glassQuad.posBuf);
-  gl.enableVertexAttribArray(gl.getAttribLocation(glassProg, 'a_position'));
-  gl.vertexAttribPointer(gl.getAttribLocation(glassProg, 'a_position'), 2, gl.FLOAT, false, 0, 0);
-  gl.bindBuffer(gl.ARRAY_BUFFER, glassQuad.texBuf);
-  gl.enableVertexAttribArray(gl.getAttribLocation(glassProg, 'a_texCoord'));
-  gl.vertexAttribPointer(gl.getAttribLocation(glassProg, 'a_texCoord'), 2, gl.FLOAT, false, 0, 0);
-  gl.drawArrays(gl.TRIANGLES, 0, 6);
-
   // --- Pass 3: Veil shader (only where stencil == 1) ---
   gl.stencilFunc(gl.EQUAL, 1, 0xFF);
   gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
@@ -501,15 +500,8 @@ function render() {
   gl.drawArrays(gl.TRIANGLES, 0, 6);
 
   // --- Pass 4: Cloth perimeter binding (包边) ---
-  const edgeColors = [
-    [0.6, 0.7, 1.0],  // stress = cool blue
-    [0.5, 0.9, 0.6],  // wireframe = green
-    [0.8, 0.9, 1.0],  // edge glow = bright white-blue
-    [0.6, 0.08, 0.1], // velvet = dark red
-  ];
-  const ec = edgeColors[currentMode] || edgeColors[2];
   gl.useProgram(stencilProg);
-  gl.uniform3f(gl.getUniformLocation(stencilProg, 'u_color'), ec[0], ec[1], ec[2]);
+  gl.uniform3f(gl.getUniformLocation(stencilProg, 'u_color'), 0.9, 0.95, 1.0);
   const perim = getClothPerimeter(cloth);
   let ei = 0;
   for (const p of perim) { edgeF32[ei++] = p.x; edgeF32[ei++] = p.y; }
@@ -625,9 +617,9 @@ async function start() {
     const sw = window.innerWidth * dpr;
     const sh = window.innerHeight * dpr;
     const clothW = sw;
-    const clothH = sh;
+    const clothH = sh * 0.8;
     const cx = 0;
-    const cy = 0;
+    const cy = sh * 0.1;
     cloth = createCloth(clothW, clothH, {
       cols: 50,
       rows: 46,
