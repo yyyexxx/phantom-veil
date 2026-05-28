@@ -23,6 +23,7 @@ let cloth = null;
 let mouseX = 0, mouseY = 0, mouseDown = false;
 let mouseGrabbedIdx = null;
 let currentMode = 2; // 0=stress 1=wire 2=edge 3=hue (default: edge glow)
+let showDebugGrid = true; // G to toggle
 const modeNames = ['Stress', 'Wireframe', 'Edge Glow', 'Hue Shift'];
 const handTracker = createHandTracker(canvas);
 
@@ -465,20 +466,24 @@ function render() {
   gl.disable(gl.STENCIL_TEST);
 
   // Debug cloth wireframe (color = clustering ratio)
-  const lineData = buildLineBuffer(cloth);
-  const ratio = getClusteringRatio(cloth);
-  let wireColor;
-  if (ratio > 0.5) wireColor = [1.0, 0.5, 0.0];        // orange = mostly clustered
-  else if (grabbedIndices.length > 0) wireColor = [0.3, 0.7, 1.0]; // blue = being grabbed
-  else wireColor = [0.0, 1.0, 0.7];                    // green = default
-  drawDebugLines(lineProg, linePosLoc, lineData, res, wireColor);
+  if (showDebugGrid) {
+    const lineData = buildLineBuffer(cloth);
+    const ratio = getClusteringRatio(cloth);
+    let wireColor;
+    if (ratio > 0.5) wireColor = [1.0, 0.5, 0.0];
+    else if (grabbedIndices.length > 0) wireColor = [0.3, 0.7, 1.0];
+    else wireColor = [0.0, 1.0, 0.7];
+    drawDebugLines(lineProg, linePosLoc, lineData, res, wireColor);
+  }
 
   // Debug info
+  const ratio = getClusteringRatio(cloth);
+  const gridStatus = showDebugGrid ? 'ON' : 'OFF';
   document.getElementById('debug-info').innerText =
-    `Cluster: ${(ratio*100).toFixed(0)}% | Grabs: ${grabbedIndices.length} | [${modeNames[currentMode]}] 1-4 R`;
+    `Cluster: ${(ratio*100).toFixed(0)}% | Grid: ${gridStatus} | [${modeNames[currentMode]}] 1-4 G R`;
 
-  // Debug: hand positions as dots with proper point size
-  if (hands.length > 0) {
+  // Debug: hand positions as dots
+  if (showDebugGrid && hands.length > 0) {
     const handPositions = new Float32Array(hands.flatMap(h => [h.x, h.y]));
     const dotBuf = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, dotBuf);
@@ -488,14 +493,12 @@ function render() {
     gl.uniform2f(gl.getUniformLocation(pointProg, 'u_resolution'), res.w, res.h);
     gl.uniform1f(pointSizeLoc, 12.0);
 
-    // All hands in one draw call
     gl.bindBuffer(gl.ARRAY_BUFFER, dotBuf);
     gl.enableVertexAttribArray(pointPosLoc);
     gl.vertexAttribPointer(pointPosLoc, 2, gl.FLOAT, false, 0, 0);
     gl.uniform3f(gl.getUniformLocation(pointProg, 'u_color'), 0.4, 0.8, 1.0);
     gl.drawArrays(gl.POINTS, 0, hands.length);
 
-    // Pinching hands: larger white dots on top
     const pinchPositions = hands.filter(h => h.isPinching);
     if (pinchPositions.length > 0) {
       const pinchData = new Float32Array(pinchPositions.flatMap(h => [h.x, h.y]));
@@ -611,9 +614,12 @@ window.addEventListener('keydown', (e) => {
   if (e.key === '2') currentMode = 1;
   if (e.key === '3') currentMode = 2;
   if (e.key === '4') currentMode = 3;
+  if (e.key === 'g' || e.key === 'G') {
+    showDebugGrid = !showDebugGrid;
+  }
   if (e.key >= '1' && e.key <= '4') {
     document.getElementById('debug-info').innerText =
-      'Mode: ' + modeNames[currentMode] + ' (1-4 to switch)';
+      'Mode: ' + modeNames[currentMode] + ' (1-4 switch, G grid)';
   }
 });
 
