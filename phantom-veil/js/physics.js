@@ -119,29 +119,35 @@ export function updatePhysics(cloth, grabbedIndices, windX = 0, windY = 0) {
   const grabbed = new Set(grabbedIndices);
   const hasGrabs = grabbedIndices.length > 0;
 
-  // --- Ring drive (absolute displacement model) ---
-  // Each ring's target = its original position + weighted grab displacement.
-  // Ring slides toward target each frame — independent of frame deltas.
+  // --- Ring drive ---
+  // Only rings between the grab's origin X and the grab's current X are pushed.
+  // This simulates: pulling fabric to the right pushes the rings in between.
   if (hasGrabs) {
     for (let r = 0; r < rings.length; r++) {
       const ring = rings[r];
+      let totalPush = 0;
 
-      // Weighted average of all grabs' displacement, by proximity
-      let weightedDx = 0, totalWeight = 0;
       for (const gi of grabbedIndices) {
         const gp = points[gi];
-        const grabDx = gp.x - gp.origX; // absolute displacement from original
-        const dist = Math.abs(ring.origX - gp.origX);
-        const w = Math.exp(-(dist * dist) / (2 * 200 * 200));
-        weightedDx += grabDx * w;
-        totalWeight += w;
+        const grabFrom = gp.origX;
+        const grabTo = gp.x;
+        const ringOrig = ring.origX;
+
+        // Ring is pushed only if it lies between grab origin and grab target
+        if (grabTo > grabFrom && ringOrig >= grabFrom && ringOrig <= grabTo) {
+          // Pulling right: rings between grabFrom and grabTo get compressed toward grabTo
+          const t = (ringOrig - grabFrom) / Math.max(1, grabTo - grabFrom);
+          const targetX = grabFrom + t * grabTo;
+          totalPush += (targetX - ring.x) * 0.3;
+        } else if (grabTo < grabFrom && ringOrig >= grabTo && ringOrig <= grabFrom) {
+          // Pulling left: rings between grabTo and grabFrom get compressed toward grabTo
+          const t = (ringOrig - grabTo) / Math.max(1, grabFrom - grabTo);
+          const targetX = grabTo + t * (grabFrom - grabTo);
+          totalPush += (targetX - ring.x) * 0.3;
+        }
       }
 
-      if (totalWeight > 0) {
-        const targetX = ring.origX + weightedDx / totalWeight;
-        // Smooth follow — rings don't jump, they slide
-        ring.x += (targetX - ring.x) * 0.3;
-      }
+      ring.x += totalPush;
     }
   }
 
@@ -155,9 +161,9 @@ export function updatePhysics(cloth, grabbedIndices, windX = 0, windY = 0) {
       rings[r - 1].x -= push;
     }
   }
-  // Clamp rings within screen bounds
+  // Soft boundary — rings can go slightly past edges
   for (const ring of rings) {
-    ring.x = Math.max(0, Math.min(cloth.width, ring.x));
+    ring.x = Math.max(-50, Math.min(cloth.width + 50, ring.x));
   }
 
   // --- Weak ring restore (when no grabs) ---

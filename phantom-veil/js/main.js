@@ -224,6 +224,16 @@ function render() {
   const windY = (Math.cos(t * 0.7) - 0.5) * 0.04;
   updatePhysics(cloth, grabbedIndices, windX, windY);
 
+  if (!cloth._lastLog || performance.now() - cloth._lastLog > 1000) {
+    cloth._lastLog = performance.now();
+    if (grabbedIndices.length > 0) {
+      const gi = grabbedIndices[0];
+      const gp = cloth.points[gi];
+      console.log("GRAB idx=" + gi + " dX=" + (gp.x - gp.origX).toFixed(0) + " rings=[" + cloth.rings.map(function(r){return r.x.toFixed(0)}).join(",") + "]");
+    }
+  }
+
+
   // Draw
   gl.clearColor(0, 0, 0, 1);
   gl.clear(gl.COLOR_BUFFER_BIT);
