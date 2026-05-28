@@ -230,16 +230,17 @@ function resizeCanvas() {
 
 // --- Debug Render ---
 
-function buildLineBuffer(cloth) {
-  const pos = [];
+function updateLineBuffer(cloth) {
+  let i = 0;
   for (const s of cloth.sticks) {
-    pos.push(cloth.points[s.p0].x, cloth.points[s.p0].y);
-    pos.push(cloth.points[s.p1].x, cloth.points[s.p1].y);
+    debugF32[i++] = cloth.points[s.p0].x;
+    debugF32[i++] = cloth.points[s.p0].y;
+    debugF32[i++] = cloth.points[s.p1].x;
+    debugF32[i++] = cloth.points[s.p1].y;
   }
-  const buf = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(pos), gl.DYNAMIC_DRAW);
-  return { buf, count: pos.length / 2 };
+  gl.bindBuffer(gl.ARRAY_BUFFER, debugBuf);
+  gl.bufferSubData(gl.ARRAY_BUFFER, 0, debugF32);
+  return { buf: debugBuf, count: debugCount / 2 };
 }
 
 function drawDebugLines(prog, posLoc, data, res, color) {
@@ -258,6 +259,17 @@ let veilProg, quad, veilMirrorLoc, veilWebcamLoc;
 let glassProg, glassQuad;
 let stencilProg, stencilPosLoc;
 let clothDataTexture;
+let clothDataArr = null;      // reusable Uint8Array
+let stencilBuf = null;         // persistent stencil buffer
+let stencilF32 = null;         // reusable Float32Array for stencil data
+let stencilCount = 0;
+let debugBuf = null;
+let debugF32 = null;
+let debugCount = 0;
+let edgeBuf = null;            // persistent edge (包边) buffer
+let edgeF32 = null;
+let dotBuf = null;             // persistent hand dot buffer
+let dotF32 = null;
 let lineProg, linePosLoc;
 let pointProg, pointPosLoc, pointSizeLoc;
 
@@ -284,20 +296,37 @@ function initRender() {
 function createClothDataTexture(cloth) {
   const w = cloth.cols;
   const h = cloth.rows;
-  const data = new Uint8Array(w * h * 4);
 
-  for (let i = 0; i < cloth.points.length; i++) {
-    const p = cloth.points[i];
-    // Encode displacement as 0-255: ((dx / clothWidth) + 0.5) * 255
-    data[i * 4]     = Math.round(((p.x - p.origX) / cloth.width + 0.5) * 255);
-    data[i * 4 + 1] = Math.round(((p.y - p.origY) / cloth.height + 0.5) * 255);
-    data[i * 4 + 2] = 0;
-    data[i * 4 + 3] = 255;
-  }
+  // Pre-allocate reusable arrays
+  clothDataArr = new Uint8Array(w * h * 4);
+  const triCount = (h - 1) * (w - 1) * 6 * 2; // 6 vertices × 2 floats per quad
+  stencilF32 = new Float32Array(triCount);
+  stencilBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, stencilBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, stencilF32.byteLength, gl.DYNAMIC_DRAW);
+  stencilCount = triCount;
+  debugCount = cloth.sticks.length * 4;
+  debugF32 = new Float32Array(debugCount);
+  debugBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, debugBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, debugF32.byteLength, gl.DYNAMIC_DRAW);
+
+  // Edge buffer for perimeter binding (max perimeter length: 2*(w+h))
+  const maxEdge = (w + h) * 2 * 2; // *2 for close loop, *2 for x,y
+  edgeF32 = new Float32Array(maxEdge);
+  edgeBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, edgeBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, maxEdge * 4, gl.DYNAMIC_DRAW);
+
+  // Dot buffers for hand tracking
+  dotF32 = new Float32Array(10 * 2); // max 10 hand dots × 2 coords
+  dotBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, dotBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, dotF32.byteLength, gl.DYNAMIC_DRAW);
 
   clothDataTexture = gl.createTexture();
   gl.bindTexture(gl.TEXTURE_2D, clothDataTexture);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -307,18 +336,15 @@ function createClothDataTexture(cloth) {
 function updateClothDataTexture(cloth) {
   const w = cloth.cols;
   const h = cloth.rows;
-  const data = new Uint8Array(w * h * 4);
-
   for (let i = 0; i < cloth.points.length; i++) {
     const p = cloth.points[i];
-    data[i * 4]     = Math.round(((p.x - p.origX) / cloth.width + 0.5) * 255);
-    data[i * 4 + 1] = Math.round(((p.y - p.origY) / cloth.height + 0.5) * 255);
-    data[i * 4 + 2] = 0;
-    data[i * 4 + 3] = 255;
+    clothDataArr[i * 4]     = Math.round(((p.x - p.origX) / cloth.width + 0.5) * 255);
+    clothDataArr[i * 4 + 1] = Math.round(((p.y - p.origY) / cloth.height + 0.5) * 255);
+    clothDataArr[i * 4 + 2] = 0;
+    clothDataArr[i * 4 + 3] = 255;
   }
-
   gl.bindTexture(gl.TEXTURE_2D, clothDataTexture);
-  gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, data);
+  gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, clothDataArr);
 }
 
 function render() {
@@ -407,33 +433,30 @@ function render() {
   gl.stencilOp(gl.KEEP, gl.KEEP, gl.REPLACE);
   gl.colorMask(false, false, false, false);
 
-  // Build triangle mesh from cloth grid quads
+  // Build triangle mesh from cloth grid quads (into pre-allocated stencilF32)
   const { cols, rows, points: pts } = cloth;
-  const triVerts = [];
+  let si = 0;
   for (let y = 0; y < rows - 1; y++) {
     for (let x = 0; x < cols - 1; x++) {
       const i = y * cols + x;
-      // Two triangles per quad
-      triVerts.push(pts[i].x, pts[i].y);
-      triVerts.push(pts[i + 1].x, pts[i + 1].y);
-      triVerts.push(pts[i + cols].x, pts[i + cols].y);
-
-      triVerts.push(pts[i + 1].x, pts[i + 1].y);
-      triVerts.push(pts[i + cols + 1].x, pts[i + cols + 1].y);
-      triVerts.push(pts[i + cols].x, pts[i + cols].y);
+      stencilF32[si++] = pts[i].x; stencilF32[si++] = pts[i].y;
+      stencilF32[si++] = pts[i + 1].x; stencilF32[si++] = pts[i + 1].y;
+      stencilF32[si++] = pts[i + cols].x; stencilF32[si++] = pts[i + cols].y;
+      stencilF32[si++] = pts[i + 1].x; stencilF32[si++] = pts[i + 1].y;
+      stencilF32[si++] = pts[i + cols + 1].x; stencilF32[si++] = pts[i + cols + 1].y;
+      stencilF32[si++] = pts[i + cols].x; stencilF32[si++] = pts[i + cols].y;
     }
   }
-  const triBuf = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, triBuf);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(triVerts), gl.DYNAMIC_DRAW);
+
+  gl.bindBuffer(gl.ARRAY_BUFFER, stencilBuf);
+  gl.bufferSubData(gl.ARRAY_BUFFER, 0, stencilF32);
 
   gl.useProgram(stencilProg);
   gl.uniform2f(gl.getUniformLocation(stencilProg, 'u_resolution'), res.w, res.h);
-  gl.bindBuffer(gl.ARRAY_BUFFER, triBuf);
+  gl.bindBuffer(gl.ARRAY_BUFFER, stencilBuf);
   gl.enableVertexAttribArray(stencilPosLoc);
   gl.vertexAttribPointer(stencilPosLoc, 2, gl.FLOAT, false, 0, 0);
-  gl.drawArrays(gl.TRIANGLES, 0, triVerts.length / 2);
-  gl.deleteBuffer(triBuf);
+  gl.drawArrays(gl.TRIANGLES, 0, stencilCount / 2);
 
   // --- Pass 3: Veil shader (only where stencil == 1) ---
   gl.stencilFunc(gl.EQUAL, 1, 0xFF);
@@ -466,28 +489,23 @@ function render() {
   gl.useProgram(stencilProg);
   gl.uniform3f(gl.getUniformLocation(stencilProg, 'u_color'), 0.9, 0.95, 1.0);
   const perim = getClothPerimeter(cloth);
-  const edgeVerts = [];
-  for (const p of perim) edgeVerts.push(p.x, p.y);
-  // Close the loop
-  if (perim.length > 0) {
-    edgeVerts.push(perim[0].x, perim[0].y);
-  }
-  const edgeBuf = gl.createBuffer();
+  let ei = 0;
+  for (const p of perim) { edgeF32[ei++] = p.x; edgeF32[ei++] = p.y; }
+  if (perim.length > 0) { edgeF32[ei++] = perim[0].x; edgeF32[ei++] = perim[0].y; }
+  const edgeVertCount = ei / 2;
   gl.bindBuffer(gl.ARRAY_BUFFER, edgeBuf);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(edgeVerts), gl.DYNAMIC_DRAW);
+  gl.bufferSubData(gl.ARRAY_BUFFER, 0, edgeF32.subarray(0, ei));
   gl.uniform2f(gl.getUniformLocation(stencilProg, 'u_resolution'), res.w, res.h);
-  gl.bindBuffer(gl.ARRAY_BUFFER, edgeBuf);
   gl.enableVertexAttribArray(stencilPosLoc);
   gl.vertexAttribPointer(stencilPosLoc, 2, gl.FLOAT, false, 0, 0);
   gl.lineWidth(2.0);
-  gl.drawArrays(gl.LINE_STRIP, 0, edgeVerts.length / 2);
-  gl.deleteBuffer(edgeBuf);
+  gl.drawArrays(gl.LINE_STRIP, 0, edgeVertCount);
 
   gl.disable(gl.STENCIL_TEST);
 
   // Debug cloth wireframe (color = clustering ratio)
   if (showDebugGrid) {
-    const lineData = buildLineBuffer(cloth);
+    const lineData = updateLineBuffer(cloth);
     const ratio = getClusteringRatio(cloth);
     let wireColor;
     if (ratio > 0.5) wireColor = [1.0, 0.5, 0.0];
@@ -504,35 +522,32 @@ function render() {
 
   // Debug: hand positions as dots
   if (showDebugGrid && hands.length > 0) {
-    const handPositions = new Float32Array(hands.flatMap(h => [h.x, h.y]));
-    const dotBuf = gl.createBuffer();
+    let di = 0;
+    for (const h of hands) { dotF32[di++] = h.x; dotF32[di++] = h.y; }
+    const handVertCount = di / 2;
+
     gl.bindBuffer(gl.ARRAY_BUFFER, dotBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, handPositions, gl.DYNAMIC_DRAW);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, dotF32.subarray(0, di));
 
     gl.useProgram(pointProg);
     gl.uniform2f(gl.getUniformLocation(pointProg, 'u_resolution'), res.w, res.h);
     gl.uniform1f(pointSizeLoc, 12.0);
-
-    gl.bindBuffer(gl.ARRAY_BUFFER, dotBuf);
     gl.enableVertexAttribArray(pointPosLoc);
     gl.vertexAttribPointer(pointPosLoc, 2, gl.FLOAT, false, 0, 0);
     gl.uniform3f(gl.getUniformLocation(pointProg, 'u_color'), 0.4, 0.8, 1.0);
-    gl.drawArrays(gl.POINTS, 0, hands.length);
+    gl.drawArrays(gl.POINTS, 0, handVertCount);
 
-    const pinchPositions = hands.filter(h => h.isPinching);
-    if (pinchPositions.length > 0) {
-      const pinchData = new Float32Array(pinchPositions.flatMap(h => [h.x, h.y]));
-      const pinchBuf = gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER, pinchBuf);
-      gl.bufferData(gl.ARRAY_BUFFER, pinchData, gl.DYNAMIC_DRAW);
+    const pinchHands = hands.filter(h => h.isPinching);
+    if (pinchHands.length > 0) {
+      di = 0;
+      for (const h of pinchHands) { dotF32[di++] = h.x; dotF32[di++] = h.y; }
+      gl.bindBuffer(gl.ARRAY_BUFFER, dotBuf);
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, dotF32.subarray(0, di));
       gl.uniform1f(pointSizeLoc, 16.0);
       gl.uniform3f(gl.getUniformLocation(pointProg, 'u_color'), 1.0, 1.0, 1.0);
-      gl.bindBuffer(gl.ARRAY_BUFFER, pinchBuf);
       gl.vertexAttribPointer(pointPosLoc, 2, gl.FLOAT, false, 0, 0);
-      gl.drawArrays(gl.POINTS, 0, pinchPositions.length);
-      gl.deleteBuffer(pinchBuf);
+      gl.drawArrays(gl.POINTS, 0, pinchHands.length);
     }
-    gl.deleteBuffer(dotBuf);
   }
 
   animationId = requestAnimationFrame(render);
