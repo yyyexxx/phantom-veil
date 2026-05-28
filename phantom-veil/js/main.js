@@ -615,6 +615,10 @@ function render() {
   gl.clearColor(0, 0, 0, 1);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
 
+  // Hands within cloth bounds (for halo in glass + veil)
+  const clothTop = cloth.baseY, clothBot = cloth.baseY + cloth.height;
+  const inCloth = hands.filter(h => h.y >= clothTop && h.y <= clothBot);
+
   // --- Pass 1: Glass (hidden content) scissored inside cloth bounds ---
   // Glass is slightly smaller than cloth, centered within it
   const glassMargin = 12; // px inset on each side
@@ -654,10 +658,6 @@ function render() {
   gl.vertexAttribPointer(gl.getAttribLocation(glassProg, 'a_texCoord'), 2, gl.FLOAT, false, 0, 0);
   gl.drawArrays(gl.TRIANGLES, 0, 6);
   gl.disable(gl.SCISSOR_TEST);
-
-  // Hands within cloth bounds (for halo rendering in both glass & veil)
-  const clothTop = cloth.baseY, clothBot = cloth.baseY + cloth.height;
-  const inCloth = hands.filter(h => h.y >= clothTop && h.y <= clothBot);
 
   // --- Pass 2 & 3: Stencil + Veil (skipped when veil is hidden) ---
   if (showVeil) {
