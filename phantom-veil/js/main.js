@@ -406,7 +406,8 @@ function render() {
   if (!grabbedIndices.length && wasGrabbing && !cloth._autoStacking) {
     const ratio = getClusteringRatio(cloth);
     if (ratio > 0.3) {
-    // Released while partially open → auto-stack entire cloth to nearest side
+      // Orange: auto-stack
+      const { cols, rows } = cloth;
     const top = cloth.points.slice(0, cloth.cols);
     const midX = cloth.width / 2;
     let leftCount = 0, rightCount = 0;
@@ -434,6 +435,16 @@ function render() {
       }
     }
     cloth._autoStacking = true;
+    } else {
+      // Blue: slowly restore to flat state — reset origX to base grid
+      const { cols, rows } = cloth;
+      for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+          const i = y * cols + x;
+          cloth.points[i].origX = x * cloth.spacingX;
+        }
+      }
+    }
   }
 
   // Auto-stack: spring animation with slight bounce
@@ -470,7 +481,7 @@ function render() {
     cloth.cfg.restoreForce = 0;
     cloth.cfg.iterations = 12;
   } else {
-    cloth.cfg.restoreForce = grabbedIndices.length > 0 ? 0 : 0.0003;
+    cloth.cfg.restoreForce = grabbedIndices.length > 0 ? 0 : 0.0015;
     cloth.cfg.iterations = 6;
   }
 
