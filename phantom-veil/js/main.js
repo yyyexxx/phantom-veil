@@ -49,18 +49,21 @@ uniform float u_mirror;
 uniform vec2 u_clothTexSize;
 uniform float u_time;
 uniform int u_mode; // 0=stress 1=wire 2=edge 3=velvet
+uniform vec2 u_hand0;     // fingertip position (0..1 UV)
+uniform vec2 u_hand1;
+uniform float u_pinch0;   // 0=open 1=pinching
+uniform float u_pinch1;
+uniform int u_handCount;
 
 vec2 getDisp(vec2 uv) {
   vec4 s = texture2D(u_clothData, uv);
   return (s.rg - 0.5) * 2.0;
 }
 
-// Absolute displacement magnitude at this point
 float getMag(vec2 uv) {
   return clamp(length(getDisp(uv)), 0.0, 1.0);
 }
 
-// Local stress: how much displacement changes between neighbors
 float getStress(vec2 uv) {
   vec2 step = 1.0 / u_clothTexSize;
   vec2 d0 = getDisp(uv);
@@ -81,9 +84,27 @@ float isEdge(vec2 uv) {
   return clamp((abs(s0 - sl) + abs(s0 - sr) + abs(s0 - su) + abs(s0 - sd)) * 5.0, 0.0, 1.0);
 }
 
+// Fingertip halo: glowing ring around hand position
+float fingertipHalo(vec2 uv, vec2 handPos, float pinching) {
+  float d = length(uv - handPos);
+  float size = pinching > 0.5 ? 0.04 : 0.025; // larger when pinching
+  float ring = smoothstep(size, size * 0.5, d) * (1.0 - smoothstep(size * 0.3, 0.0, d));
+  float brightness = pinching > 0.5 ? 0.8 : 0.35;
+  return ring * brightness;
+}
+
+// Wind-like ripple from hand
+float ripple(vec2 uv, vec2 handPos) {
+  float d = length(uv - handPos);
+  // Linear waves fading with distance
+  float wave = sin((uv.x - handPos.x) * 90.0 + u_time * 3.0) * 0.5 + 0.5;
+  wave *= 1.0 - smoothstep(0.02, 0.25, d); // fade out
+  wave *= smoothstep(0.02, 0.0, d);        // don't show right at hand
+  return wave * 0.12;
+}
+
 void main() {
   vec2 uv = v_texCoord;
-  // Sample cloth data at ORIGINAL uv (before mirror), so it aligns with cloth positions
   float mag = getMag(uv);
   float stress = getStress(uv);
   float edge = isEdge(uv);
@@ -93,30 +114,47 @@ void main() {
   if (u_mirror > 0.5) webcamUV.x = 1.0 - webcamUV.x;
   vec4 color = texture2D(u_webcam, webcamUV);
 
-  // Intensity = max of absolute displacement and local stress
   float intensity = max(mag * 0.8, stress);
 
   if (u_mode == 0) {
-    // A: Stress heatmap
     color.rgb = mix(color.rgb, color.rgb * 0.6, intensity * 0.4);
     color.rgb += vec3(0.12, 0.14, 0.2) * intensity;
   } else if (u_mode == 1) {
-    // B: Wireframe
     vec2 grid = fract(uv * u_clothTexSize);
     float line = 1.0 - step(0.04, grid.x) * step(0.04, grid.y);
     float glow = line * (0.03 + intensity * 0.2);
     color.rgb += glow * 0.7;
   } else if (u_mode == 2) {
-    // C: Edge glow
     float halo = edge * (0.06 + intensity * 0.25);
     color.rgb += vec3(0.5, 0.7, 1.0) * halo;
   } else {
-    // D: Solid red velvet curtain
     float noise = fract(sin(dot(uv * 80.0, vec2(12.9898, 78.233))) * 43758.5453);
     vec3 dark  = vec3(0.28, 0.02, 0.03);
     vec3 mid   = vec3(0.42, 0.03, 0.05);
     color.rgb = mix(dark, mid, noise);
   }
+
+  // --- Visual polish overlays (all modes) ---
+
+  // Fingertip halos
+  if (u_handCount > 0) {
+    color.rgb += vec3(0.7, 0.85, 1.0) * fingertipHalo(uv, u_hand0, u_pinch0);
+  }
+  if (u_handCount > 1) {
+    color.rgb += vec3(0.7, 0.85, 1.0) * fingertipHalo(uv, u_hand1, u_pinch1);
+  }
+
+  // Ripples from fingertips
+  if (u_handCount > 0) {
+    color.rgb += vec3(0.5, 0.7, 1.0) * ripple(uv, u_hand0);
+  }
+  if (u_handCount > 1) {
+    color.rgb += vec3(0.5, 0.7, 1.0) * ripple(uv, u_hand1);
+  }
+
+  // Stress crease: white highlight on high-stress edges
+  float crease = isEdge(uv) * intensity * 0.3;
+  color.rgb += vec3(1.0, 1.0, 1.0) * crease;
 
   gl_FragColor = color;
 }`;
@@ -629,6 +667,19 @@ function render() {
     gl.uniform2f(gl.getUniformLocation(veilProg, 'u_clothTexSize'), cloth.cols, cloth.rows);
     gl.uniform1f(gl.getUniformLocation(veilProg, 'u_time'), performance.now() * 0.001);
     gl.uniform1i(gl.getUniformLocation(veilProg, 'u_mode'), currentMode);
+
+    // Pass hand positions (screen px → UV)
+    gl.uniform1i(gl.getUniformLocation(veilProg, 'u_handCount'), Math.min(hands.length, 2));
+    if (hands.length > 0) {
+      gl.uniform2f(gl.getUniformLocation(veilProg, 'u_hand0'),
+        hands[0].x / res.w, hands[0].y / res.h);
+      gl.uniform1f(gl.getUniformLocation(veilProg, 'u_pinch0'), hands[0].isPinching ? 1.0 : 0.0);
+    }
+    if (hands.length > 1) {
+      gl.uniform2f(gl.getUniformLocation(veilProg, 'u_hand1'),
+        hands[1].x / res.w, hands[1].y / res.h);
+      gl.uniform1f(gl.getUniformLocation(veilProg, 'u_pinch1'), hands[1].isPinching ? 1.0 : 0.0);
+    }
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, webcamTexture);
