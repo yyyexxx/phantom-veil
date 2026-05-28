@@ -406,7 +406,7 @@ function render() {
       if (p.x < midX) leftCount++;
       else rightCount++;
     }
-    const stackRight = leftCount > rightCount;
+    const stackRight = rightCount > leftCount;
     const edgeX = stackRight ? cloth.width - 5 : 5;
     const gap = 2;
     const { cols, rows } = cloth;
@@ -428,12 +428,31 @@ function render() {
     cloth._autoStacking = true;
   }
 
-  // Boosted restore + higher iterations during auto-stack
+  // Auto-stack: constant-speed motorized slide
   if (cloth._autoStacking) {
-    const allStacked = cloth.points.every(p => Math.abs(p.x - p.origX) < 5);
-    if (allStacked) cloth._autoStacking = false;
-    cloth.cfg.restoreForce = grabbedIndices.length > 0 ? 0 : 0.03;
-    cloth.cfg.iterations = 20; // propagate stack through all rows
+    const SPEED = 12; // px per frame — constant, like motorized curtain
+    let allDone = true;
+
+    for (let i = 0; i < cloth.points.length; i++) {
+      const p = cloth.points[i];
+      const dx = p.origX - p.x;
+      if (Math.abs(dx) > 2) {
+        allDone = false;
+        const step = Math.sign(dx) * Math.min(SPEED, Math.abs(dx));
+        p.x += step;
+        p.oldX = p.x; // zero velocity — no oscillation
+      } else {
+        p.x = p.origX;
+        p.oldX = p.x;
+      }
+    }
+
+    if (allDone) {
+      cloth._autoStacking = false;
+    }
+    // Disable normal physics during auto-stack
+    cloth.cfg.restoreForce = 0;
+    cloth.cfg.iterations = 12;
   } else {
     cloth.cfg.restoreForce = grabbedIndices.length > 0 ? 0 : 0.0008;
     cloth.cfg.iterations = 12;
