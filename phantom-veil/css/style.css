@@ -139,3 +139,251 @@ canvas {
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
 }
+
+/* ---- Glass Control Buttons ---- */
+
+.glass-btn {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 18px;
+  font-size: 14px;
+  font-weight: 500;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.08);
+  border: 0.5px solid rgba(255, 255, 255, 0.15);
+  border-radius: 100px;
+  cursor: pointer;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  transition: background 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease, opacity 0.3s ease;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  -webkit-font-smoothing: antialiased;
+}
+
+.glass-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+}
+
+.glass-btn:active {
+  transform: scale(0.95);
+}
+
+.glass-btn svg {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+/* Eye icon — hide UI toggle */
+#btn-hide-ui {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  z-index: 120;
+  padding: 10px;
+}
+
+/* Upload button — top right, next to eye icon */
+#btn-upload {
+  position: absolute;
+  top: 18px;
+  right: 64px;
+  z-index: 120;
+  padding: 10px;
+}
+
+#btn-hide-ui.icon-btn {
+  padding: 10px;
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  justify-content: center;
+}
+
+.glass-btn.off {
+  opacity: 0.35;
+}
+
+.glass-btn.off svg {
+  opacity: 0.4;
+}
+
+/* Controls container */
+#controls {
+  position: absolute;
+  bottom: 24px;
+  right: 18px;
+  display: flex;
+  gap: 10px;
+  z-index: 110;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+#controls.hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(8px);
+}
+
+/* Reset button hidden until veil first opened */
+#btn-reset {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.4s ease, background 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
+}
+
+#btn-reset.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* ---- Settings Panel ---- */
+
+#settings-panel {
+  position: absolute;
+  bottom: 80px;
+  right: 18px;
+  z-index: 130;
+  width: 220px;
+  padding: 18px;
+  background: rgba(20, 20, 20, 0.75);
+  border: 0.5px solid rgba(255, 255, 255, 0.12);
+  border-radius: 18px;
+  backdrop-filter: blur(30px);
+  -webkit-backdrop-filter: blur(30px);
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+#settings-panel.hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(8px) scale(0.96);
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.4);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* Filter mode chips */
+.filter-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.filter-chip {
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  color: rgba(255, 255, 255, 0.55);
+  background: rgba(255, 255, 255, 0.06);
+  border: 0.5px solid rgba(255, 255, 255, 0.1);
+  border-radius: 100px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  -webkit-font-smoothing: antialiased;
+}
+
+.filter-chip:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.filter-chip.active {
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.25);
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.08);
+}
+
+/* Toggle switches */
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.toggle-switch {
+  width: 44px;
+  height: 26px;
+  border-radius: 13px;
+  border: none;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.12);
+  position: relative;
+  transition: background 0.25s ease;
+  padding: 0;
+}
+
+.toggle-switch::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  transition: transform 0.25s ease;
+}
+
+.toggle-switch.on {
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.toggle-switch.on::after {
+  transform: translateX(18px);
+}
+
+/* Volume slider */
+.volume-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.12);
+  outline: none;
+  cursor: pointer;
+}
+
+.volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+}
+
+.volume-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  border: none;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+}

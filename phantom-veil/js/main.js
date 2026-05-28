@@ -2,6 +2,9 @@
 
 import { createCloth, updatePhysics, findClosestPoint, getClothPerimeter, resetCloth, getClusteringRatio } from './physics.js';
 import { createHandTracker } from './hand-tracking.js';
+import { createAudioEngine, startRustle, stopRustle, setVeilOpenRatio, setGlassEnabled, setMasterVolume, destroyAudioEngine } from './audio.js';
+import { createParticleSystem, updateParticles, getParticlePositions, getParticleCount, getYoungCount, destroyParticleSystem } from './particles.js';
+import { fetchDefaultContent } from './api.js';
 
 const canvas = document.getElementById('veil-canvas');
 const gl = canvas.getContext('webgl', {
@@ -23,11 +26,24 @@ let cloth = null;
 let mouseX = 0, mouseY = 0, mouseDown = false;
 let mouseGrabbedIdx = null;
 let currentMode = 2; // 0=stress 1=wire 2=edge 3=velvet (default: edge glow)
-let showDebugGrid = true; // G to toggle
+let showDebugGrid = false; // G to toggle
 let showVeil = true;       // V to toggle cloth/veil
 let showGlass = true;      // F to toggle glass filter
 const modeNames = ['Stress', 'Wireframe', 'Edge Glow', 'Velvet'];
 const handTracker = createHandTracker(canvas);
+let prevHands = []; // track previous hand positions for velocity
+let audioInited = false;
+let lastFrameTime = performance.now();
+let dustBuf = null;  // particle position buffer
+let hasEverOpened = false;
+let uiHidden = false;
+let prevClothSample = null; // for cloth velocity tracking
+let lastHandTime = performance.now();
+let autoClosing = false;
+let autoResetEnabled = false;
+let contentVideo = null;
+let contentTexture = null;
+let useVideo = false;
 
 // --- Shaders ---
 
@@ -167,14 +183,16 @@ void main() {
   gl_FragColor = color;
 }`;
 
-// Glass frag: hidden content with refraction + reflection
+// Glass frag: hidden ocean with multi-layered waves, optional video overlay
 const glassFrag = /* glsl */ `
 precision mediump float;
 varying vec2 v_texCoord;
 uniform vec2 u_resolution;
 uniform sampler2D u_webcam;
+uniform sampler2D u_content;
 uniform float u_mirror;
 uniform float u_showGlass;
+uniform float u_useVideo;
 uniform vec2 u_hand0;
 uniform vec2 u_hand1;
 uniform float u_pinch0;
@@ -195,14 +213,55 @@ float fingertipHalo(vec2 uv, vec2 handPos, float pinching) {
   return ring * brightness;
 }
 
+// Procedural ocean with layered sine waves
+vec3 oceanColor(vec2 uv, float t) {
+  // Deep ocean palette
+  vec3 deepBlue   = vec3(0.01, 0.08, 0.25);
+  vec3 midBlue    = vec3(0.02, 0.18, 0.45);
+  vec3 surface    = vec3(0.05, 0.30, 0.55);
+  vec3 foam       = vec3(0.25, 0.45, 0.60);
+
+  // Multi-layered waves at different angles and speeds
+  float wave1 = sin(uv.x * 8.0  + uv.y * 3.0  + t * 0.4) * 0.5 + 0.5;
+  float wave2 = sin(uv.x * 5.0  - uv.y * 6.0  + t * 0.6) * 0.5 + 0.5;
+  float wave3 = sin(uv.x * 12.0 + uv.y * 10.0 - t * 0.35) * 0.5 + 0.5;
+  float wave4 = cos(uv.x * 3.0  - uv.y * 8.0  + t * 0.5) * 0.5 + 0.5;
+
+  float height = wave1 * 0.35 + wave2 * 0.25 + wave3 * 0.25 + wave4 * 0.15;
+  // Normalize to ~0..1
+  height = height * 0.85 + 0.075;
+
+  // Light caustic-like patterns
+  float caustic = sin(uv.x * 30.0 + uv.y * 20.0 - t * 0.7) *
+                  cos(uv.x * 25.0 - uv.y * 18.0 + t * 0.5);
+  caustic = caustic * 0.5 + 0.5;
+  caustic = pow(caustic, 3.0) * 0.08;
+
+  // Color gradient: deep at bottom, lighter near top (depth illusion)
+  vec3 col = mix(deepBlue, midBlue, smoothstep(0.2, 0.6, height));
+  col = mix(col, surface, smoothstep(0.65, 0.85, height));
+  // Foam crests at the highest points
+  col = mix(col, foam, smoothstep(0.82, 0.92, height) * 0.3);
+
+  // Add caustic shimmer
+  col += caustic * vec3(0.3, 0.5, 0.7);
+
+  // Subtle depth darkening toward bottom
+  col = mix(col, deepBlue * 0.7, uv.y * 0.3);
+
+  return col;
+}
+
 void main() {
   vec2 uv = v_texCoord;
 
-  vec3 top    = vec3(0.04, 0.22, 0.50);
-  vec3 bottom = vec3(0.01, 0.12, 0.30);
-  vec3 ocean = mix(top, bottom, uv.y);
-  float ray = sin(uv.x * 40.0 + uv.y * 15.0) * sin(uv.y * 35.0 - uv.x * 10.0);
-  ocean += ray * 0.04;
+  // Use video if available, otherwise procedural ocean
+  vec3 ocean;
+  if (u_useVideo > 0.5) {
+    ocean = texture2D(u_content, uv).rgb;
+  } else {
+    ocean = oceanColor(uv, u_time);
+  }
 
   if (u_showGlass < 0.5) {
     gl_FragColor = vec4(ocean, 1.0);
@@ -213,9 +272,12 @@ void main() {
   float ry = cos(uv.x * 180.0) * 0.0004;
   vec2 refrUV = uv + vec2(rx, ry);
 
-  vec3 refrOcean = mix(top, bottom, refrUV.y);
-  float ray2 = sin(refrUV.x * 40.0 + refrUV.y * 15.0) * sin(refrUV.y * 35.0 - refrUV.x * 10.0);
-  refrOcean += ray2 * 0.04;
+  vec3 refrOcean;
+  if (u_useVideo > 0.5) {
+    refrOcean = texture2D(u_content, refrUV).rgb;
+  } else {
+    refrOcean = oceanColor(refrUV, u_time);
+  }
 
   vec2 camUV = uv;
   if (u_mirror > 0.5) camUV.x = 1.0 - camUV.x;
@@ -266,6 +328,14 @@ precision mediump float;
 uniform vec3 u_color;
 void main() {
   gl_FragColor = vec4(u_color, 1.0);
+}`;
+
+const alphaPointFrag = /* glsl */ `
+precision mediump float;
+uniform vec3 u_color;
+uniform float u_alpha;
+void main() {
+  gl_FragColor = vec4(u_color, u_alpha);
 }`;
 
 // --- WebGL Helpers ---
@@ -377,6 +447,7 @@ let dotBuf = null;             // persistent hand dot buffer
 let dotF32 = null;
 let lineProg, linePosLoc;
 let pointProg, pointPosLoc, pointSizeLoc;
+let dustProg, dustPosLoc, dustAlphaLoc;
 
 function initRender() {
   veilProg = createProgram(quadVert, veilFrag);
@@ -395,7 +466,16 @@ function initRender() {
   pointProg = createProgram(debugPointVert, debugColorFrag);
   pointPosLoc = gl.getAttribLocation(pointProg, 'a_position');
   pointSizeLoc = gl.getUniformLocation(pointProg, 'u_pointSize');
+
+  dustProg = createProgram(debugPointVert, alphaPointFrag);
+  dustPosLoc = gl.getAttribLocation(dustProg, 'a_position');
+  dustAlphaLoc = gl.getUniformLocation(dustProg, 'u_alpha');
+
   webcamTexture = createTexture();
+  contentTexture = createTexture();
+  // Init content texture with a dark blue so shader has valid data before first video frame
+  gl.bindTexture(gl.TEXTURE_2D, contentTexture);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([5, 40, 100, 255]));
 }
 
 function createClothDataTexture(cloth) {
@@ -462,10 +542,71 @@ function render() {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, videoEl);
   }
 
+  // Update content video texture if remote video is playing
+  if (contentVideo && contentVideo.readyState >= 2) {
+    gl.bindTexture(gl.TEXTURE_2D, contentTexture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, contentVideo);
+  }
+
   // Collect grabbed indices from hands + mouse
   const hands = handTracker.getHands();
   const grabRadius = handTracker.getInteractionRadius();
   const grabbedIndices = [];
+
+  // Compute hand velocity for particles
+  let anyHandVel = 0;
+  for (const h of hands) {
+    const prev = prevHands.find(p => p.id === h.id);
+    if (prev) {
+      const dx = h.x - prev.x;
+      const dy = h.y - prev.y;
+      const vel = Math.sqrt(dx * dx + dy * dy);
+      if (vel > anyHandVel) anyHandVel = vel;
+    }
+  }
+  prevHands = hands.map(h => ({ id: h.id, x: h.x, y: h.y }));
+
+  // Audio rustle: continuous noise modulated by cloth movement velocity
+  // Sample cloth points every N points, compute average displacement from prev frame
+  const sampleStep = Math.floor(cloth.points.length / 30); // ~30 sample points
+  let clothVel = 0;
+  if (prevClothSample) {
+    let totalDisp = 0;
+    let n = 0;
+    for (let i = 0; i < cloth.points.length; i += sampleStep) {
+      const p = cloth.points[i];
+      const prev = prevClothSample[i];
+      if (prev) {
+        totalDisp += Math.sqrt((p.x - prev.x) ** 2 + (p.y - prev.y) ** 2);
+        n++;
+      }
+    }
+    clothVel = n > 0 ? totalDisp / n : 0;
+  }
+  // Store current positions for next frame's comparison
+  prevClothSample = {};
+  for (let i = 0; i < cloth.points.length; i += sampleStep) {
+    const p = cloth.points[i];
+    prevClothSample[i] = { x: p.x, y: p.y };
+  }
+
+  if (clothVel > 0.3) {
+    startRustle(clothVel);
+  } else {
+    stopRustle();
+  }
+
+  // Dust particles: spawn near primary hand on any movement
+  const now = performance.now();
+  const dt = Math.min((now - lastFrameTime) / 1000, 0.1);
+  lastFrameTime = now;
+  const primaryHand = hands.find(h => h.isPinching) || hands[0];
+  updateParticles(
+    primaryHand ? primaryHand.x : null,
+    primaryHand ? primaryHand.y : null,
+    primaryHand ? anyHandVel : 0,
+    dt
+  );
 
   for (const h of hands) {
     if (h.isPinching) {
@@ -589,6 +730,40 @@ function render() {
     cloth.cfg.iterations = 6;
   }
 
+  // --- Auto-reset: close veil after 10s with no hands detected ---
+  if (hands.length > 0) {
+    lastHandTime = performance.now();
+    autoClosing = false;
+  }
+
+  if (autoResetEnabled && !autoClosing && !grabbedIndices.length) {
+    const idleSec = (performance.now() - lastHandTime) / 1000;
+    const ratio = getClusteringRatio(cloth);
+    if (idleSec > 10 && ratio > 0.02) {
+      // Cancel any auto-stack, trigger close
+      cloth._autoStacking = false;
+      cloth._stackVel = null;
+      cloth.cfg.iterations = 6;
+      autoClosing = true;
+      const { cols, rows } = cloth;
+      for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+          const i = y * cols + x;
+          cloth.points[i].origX = x * cloth.spacingX;
+        }
+      }
+    }
+  }
+
+  // During auto-close, use same gentle restore force as blue state
+  if (autoClosing) {
+    cloth.cfg.restoreForce = 0.0015;
+    // Stop when cloth is nearly flat
+    if (getClusteringRatio(cloth) < 0.01) {
+      autoClosing = false;
+    }
+  }
+
   const t = performance.now() * 0.001;
   const windX = (Math.sin(t * 0.5) - 0.5) * 0.04;
   const windY = (Math.cos(t * 0.7) - 0.5) * 0.04;
@@ -623,6 +798,12 @@ function render() {
 
   // Halo color: blue when <50% clustered, orange when ≥50%
   const clusterRatio = getClusteringRatio(cloth);
+  if (clusterRatio > 0.1 && !hasEverOpened) {
+    hasEverOpened = true;
+    document.getElementById('btn-reset').classList.add('visible');
+  }
+  setGlassEnabled(showGlass);
+  setVeilOpenRatio(clusterRatio);
   const haloColor = clusterRatio > 0.5 ? [0.95, 0.55, 0.1] : [0.35, 0.7, 1.0];
 
   // --- Pass 1: Glass (hidden content) scissored inside cloth bounds ---
@@ -654,8 +835,12 @@ function render() {
     gl.uniform1f(gl.getUniformLocation(glassProg, 'u_pinch1'), inCloth[1].isPinching ? 1.0 : 0.0);
   }
   gl.uniform1f(gl.getUniformLocation(glassProg, 'u_time'), performance.now() * 0.001);
+  gl.uniform1f(gl.getUniformLocation(glassProg, 'u_useVideo'), useVideo ? 1.0 : 0.0);
+  gl.uniform1i(gl.getUniformLocation(glassProg, 'u_content'), 1);
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, webcamTexture);
+  gl.activeTexture(gl.TEXTURE1);
+  gl.bindTexture(gl.TEXTURE_2D, contentTexture);
   gl.bindBuffer(gl.ARRAY_BUFFER, glassQuad.posBuf);
   gl.enableVertexAttribArray(gl.getAttribLocation(glassProg, 'a_position'));
   gl.vertexAttribPointer(gl.getAttribLocation(glassProg, 'a_position'), 2, gl.FLOAT, false, 0, 0);
@@ -825,6 +1010,37 @@ function render() {
     }
   }
 
+  // Dust particles: two-pass rendering for life-based alpha fade
+  const dustCount = getParticleCount();
+  if (dustCount > 0) {
+    const dustPos = getParticlePositions();
+    gl.bindBuffer(gl.ARRAY_BUFFER, dustBuf);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, dustPos);
+
+    gl.useProgram(dustProg);
+    gl.uniform2f(gl.getUniformLocation(dustProg, 'u_resolution'), res.w, res.h);
+    gl.uniform1f(gl.getUniformLocation(dustProg, 'u_pointSize'), 2.5);
+    gl.uniform3f(gl.getUniformLocation(dustProg, 'u_color'), 1.0, 0.97, 0.85);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.bindBuffer(gl.ARRAY_BUFFER, dustBuf);
+    gl.enableVertexAttribArray(dustPosLoc);
+    gl.vertexAttribPointer(dustPosLoc, 2, gl.FLOAT, false, 0, 0);
+
+    // Pass 1: young particles (life > 1.5s) — brighter
+    const youngCount = getYoungCount();
+    if (youngCount > 0) {
+      gl.uniform1f(dustAlphaLoc, 0.28);
+      gl.drawArrays(gl.POINTS, 0, youngCount);
+    }
+    // Pass 2: old particles (life <= 1.5s) — fading out
+    if (dustCount > youngCount) {
+      gl.uniform1f(dustAlphaLoc, 0.10);
+      gl.drawArrays(gl.POINTS, youngCount, dustCount - youngCount);
+    }
+    gl.disable(gl.BLEND);
+  }
+
   animationId = requestAnimationFrame(render);
 }
 
@@ -866,14 +1082,61 @@ canvas.addEventListener('touchend', () => { mouseDown = false; mouseGrabbedIdx =
 function cleanup() {
   if (animationId) { cancelAnimationFrame(animationId); animationId = null; }
   handTracker.destroy();
+  destroyAudioEngine();
+  destroyParticleSystem();
+  if (dustBuf) { gl.deleteBuffer(dustBuf); dustBuf = null; }
+  if (contentVideo) { contentVideo.pause(); contentVideo.src = ''; contentVideo = null; }
 }
 
 async function start() {
-  try {
-    document.getElementById('debug-info').innerText = 'Starting camera...';
-    initRender();
-    await handTracker.init();
+  document.getElementById('debug-info').innerText = 'Starting camera...';
+  initRender();
+  if (!audioInited) { createAudioEngine(); audioInited = true; }
 
+  // Load default ocean video
+  const defaultVideo = document.createElement('video');
+  defaultVideo.src = 'default_ocean.mp4';
+  defaultVideo.loop = true;
+  defaultVideo.muted = true;
+  defaultVideo.playsInline = true;
+  contentVideo = defaultVideo;
+  defaultVideo.play().then(() => {
+    useVideo = true;
+    console.log('Content: using default ocean video');
+  }).catch(() => {});
+
+  // Try remote content, override default if successful
+  try {
+    const result = await fetchDefaultContent();
+    if (result && result.url) {
+      const vid = document.createElement('video');
+      vid.src = result.url;
+      vid.loop = true;
+      vid.muted = true;
+      vid.playsInline = true;
+      vid.crossOrigin = 'anonymous';
+      vid.play().then(() => {
+        if (contentVideo) contentVideo.pause();
+        contentVideo = vid;
+        useVideo = true;
+        console.log('Content: using remote video');
+      }).catch(() => {});
+    }
+  } catch (_) {}
+
+  let cameraOk = false;
+  try {
+    await handTracker.init();
+    cameraOk = true;
+  } catch (err) {
+    console.warn('Camera unavailable, falling back to mouse-only mode:', err.message);
+    document.getElementById('debug-info').innerText = 'Mouse-only mode (no camera)';
+    // Create a fallback black texture so shaders don't sample garbage
+    gl.bindTexture(gl.TEXTURE_2D, webcamTexture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([20, 20, 30, 255]));
+  }
+
+  try {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const sw = window.innerWidth * dpr;
     const sh = window.innerHeight * dpr;
@@ -903,11 +1166,18 @@ async function start() {
 
     createClothDataTexture(cloth);
 
-    document.getElementById('debug-info').innerText = 'System Active';
+    createParticleSystem();
+    dustBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, dustBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, 500 * 2 * 4, gl.DYNAMIC_DRAW);
+
+    setMasterVolume(0.84);
+    document.getElementById('debug-info').innerText = cameraOk ? 'System Active' : 'Mouse-only mode';
+    lastFrameTime = performance.now();
     render();
   } catch (err) {
     console.error(err);
-    document.getElementById('debug-info').innerText = 'Camera Error: ' + err.message;
+    document.getElementById('debug-info').innerText = 'Error: ' + err.message;
   }
 }
 
@@ -919,6 +1189,8 @@ document.getElementById('begin-btn').addEventListener('click', () => {
 window.addEventListener('keydown', (e) => {
   if (e.key === 'r' || e.key === 'R') {
     resetCloth(cloth);
+    hasEverOpened = false;
+    document.getElementById('btn-reset').classList.remove('visible');
     document.getElementById('debug-info').innerText =
       'Cluster: 0% | Mode: ' + modeNames[currentMode] + ' | Reset done';
   }
@@ -928,18 +1200,172 @@ window.addEventListener('keydown', (e) => {
   if (e.key === '4') currentMode = 3;
   if (e.key === 'g' || e.key === 'G') {
     showDebugGrid = !showDebugGrid;
+    document.getElementById('toggle-grid').classList.toggle('on', showDebugGrid);
   }
   if (e.key === 'v' || e.key === 'V') {
     showVeil = !showVeil;
+    document.getElementById('toggle-veil').classList.toggle('on', showVeil);
   }
   if (e.key === 'f' || e.key === 'F') {
     showGlass = !showGlass;
+    updateGlassUI();
   }
   if (e.key >= '1' && e.key <= '4') {
-    document.getElementById('debug-info').innerText =
-      'Mode: ' + modeNames[currentMode] + ' (1-4 switch, G grid)';
+    document.querySelectorAll('.filter-chip').forEach(c => {
+      c.classList.toggle('active', parseInt(c.dataset.mode) === currentMode);
+    });
   }
 });
 
-window.addEventListener('resize', resizeCanvas);
+// --- UI Controls ---
+
+document.getElementById('btn-reset').addEventListener('click', () => {
+  resetCloth(cloth);
+  hasEverOpened = false;
+  document.getElementById('btn-reset').classList.remove('visible');
+});
+
+// Glass filter quick toggle
+const btnGlass = document.getElementById('btn-glass');
+btnGlass.addEventListener('click', () => {
+  showGlass = !showGlass;
+  updateGlassUI();
+});
+function updateGlassUI() {
+  btnGlass.classList.toggle('off', !showGlass);
+  document.getElementById('toggle-glass').classList.toggle('on', showGlass);
+}
+const settingsPanel = document.getElementById('settings-panel');
+const btnSettings = document.getElementById('btn-settings');
+btnSettings.addEventListener('click', (e) => {
+  e.stopPropagation();
+  settingsPanel.classList.toggle('hidden');
+});
+settingsPanel.addEventListener('click', (e) => {
+  e.stopPropagation();
+});
+document.addEventListener('click', () => {
+  settingsPanel.classList.add('hidden');
+});
+
+// Filter mode chips
+document.getElementById('filter-options').addEventListener('click', (e) => {
+  const chip = e.target.closest('.filter-chip');
+  if (!chip) return;
+  currentMode = parseInt(chip.dataset.mode);
+  document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+  chip.classList.add('active');
+});
+
+// Toggle switches
+document.querySelectorAll('.toggle-switch').forEach(btn => {
+  btn.addEventListener('click', () => {
+    btn.classList.toggle('on');
+    const key = btn.dataset.key;
+    if (key === 'veil') showVeil = btn.classList.contains('on');
+    if (key === 'glass') { showGlass = btn.classList.contains('on'); updateGlassUI(); }
+    if (key === 'grid') showDebugGrid = btn.classList.contains('on');
+    if (key === 'autoreset') autoResetEnabled = btn.classList.contains('on');
+  });
+});
+
+// Content upload
+const uploadInput = document.getElementById('content-upload');
+document.getElementById('btn-upload').addEventListener('click', () => {
+  uploadInput.click();
+});
+uploadInput.addEventListener('change', () => {
+  const file = uploadInput.files[0];
+  if (!file) return;
+
+  const url = URL.createObjectURL(file);
+  const isVideo = file.type.startsWith('video/');
+
+  if (isVideo) {
+    if (contentVideo) { contentVideo.pause(); }
+    contentVideo = document.createElement('video');
+    contentVideo.src = url;
+    contentVideo.loop = true;
+    contentVideo.muted = true;
+    contentVideo.playsInline = true;
+    contentVideo.play().then(() => {
+      useVideo = true;
+    }).catch(err => console.warn('Video play failed:', err));
+  } else {
+    // Image: draw to canvas once, upload to contentTexture
+    const img = new Image();
+    img.onload = () => {
+      gl.bindTexture(gl.TEXTURE_2D, contentTexture);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+      useVideo = true;
+      // Stop any video that was playing
+      if (contentVideo) { contentVideo.pause(); contentVideo = null; }
+    };
+    img.src = url;
+  }
+});
+
+// Volume slider: percentage multiplier over base levels (min 20%)
+document.getElementById('volume-slider').addEventListener('input', (e) => {
+  setMasterVolume(0.2 + (e.target.value / 100) * 0.8);
+});
+
+document.getElementById('btn-hide-ui').addEventListener('click', () => {
+  uiHidden = !uiHidden;
+  document.getElementById('controls').classList.toggle('hidden', uiHidden);
+  document.getElementById('key-hints').style.opacity = uiHidden ? '0' : '1';
+  const hideBtn = document.getElementById('btn-hide-ui');
+  hideBtn.style.opacity = uiHidden ? '0.3' : '1';
+});
+
+let lastResizeAspect = 0;
+
+function handleResize() {
+  resizeCanvas();
+  if (!cloth) return;
+
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const sw = window.innerWidth * dpr;
+  const sh = window.innerHeight * dpr;
+  const newAspect = sw / sh;
+
+  // Only recreate cloth if aspect ratio changed meaningfully
+  if (Math.abs(newAspect - lastResizeAspect) < 0.01) return;
+  lastResizeAspect = newAspect;
+
+  const clothW = sw;
+  const clothH = sh * 0.8;
+  const cx = 0;
+  const cy = sh * 0.1;
+
+  // Rebuild cloth with new dimensions
+  const newCloth = createCloth(clothW, clothH, {
+    cols: cloth.cols,
+    rows: cloth.rows,
+    gravity: cloth.cfg.gravity,
+    friction: cloth.cfg.friction,
+    stiffness: cloth.cfg.stiffness,
+    restoreForce: cloth.cfg.restoreForce,
+    iterations: cloth.cfg.iterations,
+    railFriction: cloth.cfg.railFriction,
+    railDamping: cloth.cfg.railDamping,
+  });
+  for (const p of newCloth.points) {
+    p.x += cx; p.y += cy;
+    p.oldX = p.x; p.oldY = p.y;
+    p.origX = p.x; p.origY = p.y;
+  }
+  newCloth.baseX = cx;
+  newCloth.baseY = cy;
+  newCloth._cy = cy;
+
+  // Replace old cloth and recreate data texture + buffers
+  cloth = newCloth;
+  createClothDataTexture(cloth);
+  hasEverOpened = false;
+  document.getElementById('btn-reset').classList.remove('visible');
+}
+
+window.addEventListener('resize', handleResize);
+window.addEventListener('orientationchange', () => setTimeout(handleResize, 300));
 window.addEventListener('beforeunload', cleanup);

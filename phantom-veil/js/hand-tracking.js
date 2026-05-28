@@ -25,14 +25,20 @@ export function createHandTracker(canvas) {
   function adaptThresholds() {
     const isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
     const sw = window.innerWidth;
+    let deviceType = 'laptop';
+    let fov = null;
 
     if (isMobile && sw < 768) {
-      // Phone — hands appear larger on screen, bigger radius needed
+      deviceType = 'phone';
       pinchThresholdLow = 0.06;
       pinchThresholdHigh = 0.09;
       interactionRadius = 180;
+    } else if (isMobile) {
+      deviceType = 'tablet';
+      pinchThresholdLow = 0.055;
+      pinchThresholdHigh = 0.085;
+      interactionRadius = 165;
     } else {
-      // Laptop/desktop
       pinchThresholdLow = 0.05;
       pinchThresholdHigh = 0.08;
       interactionRadius = 150;
@@ -42,16 +48,15 @@ export function createHandTracker(canvas) {
     if (camera && camera.videoTrack) {
       const settings = camera.videoTrack.getSettings();
       if (settings.fieldOfView) {
-        const fov = settings.fieldOfView;
-        // Wider FOV → hands appear smaller → lower threshold
-        const factor = fov / 70; // Normalize around 70° FOV
+        fov = settings.fieldOfView;
+        const factor = fov / 70;
         pinchThresholdLow = 0.05 * factor;
         pinchThresholdHigh = 0.08 * factor;
         interactionRadius = 150 * factor;
       }
     }
 
-    console.log(`HandTracker: pinch=[${pinchThresholdLow.toFixed(3)},${pinchThresholdHigh.toFixed(3)}] radius=${interactionRadius}`);
+    console.log(`HandTracker: device=${deviceType}${fov ? ' fov=' + fov.toFixed(0) : ''} pinch=[${pinchThresholdLow.toFixed(3)},${pinchThresholdHigh.toFixed(3)}] radius=${interactionRadius}`);
   }
 
   async function init(facingMode = 'user') {
