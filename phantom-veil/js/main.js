@@ -124,12 +124,13 @@ void main() {
 // Glass frag: hidden content with refraction + reflection
 const glassFrag = /* glsl */ `
 precision mediump float;
+varying vec2 v_texCoord;
 uniform vec2 u_resolution;
 uniform sampler2D u_webcam;
 uniform float u_mirror;
 uniform float u_showGlass; // 1.0 = glass on, 0.0 = raw ocean
 void main() {
-  vec2 uv = gl_FragCoord.xy / u_resolution;
+  vec2 uv = v_texCoord;
 
   // Hidden content: ocean gradient
   vec3 top    = vec3(0.04, 0.22, 0.50);
