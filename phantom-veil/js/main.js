@@ -22,7 +22,7 @@ let animationId = null;
 let cloth = null;
 let mouseX = 0, mouseY = 0, mouseDown = false;
 let mouseGrabbedIdx = null;
-let currentMode = 3; // 0=stress 1=wire 2=edge 3=velvet (default: velvet)
+let currentMode = 2; // 0=stress 1=wire 2=edge 3=velvet (default: edge glow)
 let showDebugGrid = true; // G to toggle
 const modeNames = ['Stress', 'Wireframe', 'Edge Glow', 'Velvet'];
 const handTracker = createHandTracker(canvas);
@@ -110,10 +110,13 @@ void main() {
     color.rgb += vec3(0.5, 0.7, 1.0) * halo;
   } else {
     // D: Solid red velvet curtain
-    float noise = fract(sin(dot(uv * 80.0, vec2(12.9898, 78.233))) * 43758.5453);
-    vec3 dark  = vec3(0.28, 0.02, 0.03);
-    vec3 mid   = vec3(0.42, 0.03, 0.05);
-    color.rgb = mix(dark, mid, noise);
+    float n1 = fract(sin(dot(uv * 15.0, vec2(12.9898, 78.233))) * 43758.5453);
+    float n2 = fract(sin(dot(uv * 23.0, vec2(93.131, 47.519))) * 65719.771);
+    float noise = n1 * 0.7 + n2 * 0.3;
+    vec3 dark  = vec3(0.25, 0.02, 0.03);
+    vec3 mid   = vec3(0.45, 0.04, 0.06);
+    vec3 light = vec3(0.55, 0.06, 0.08);
+    color.rgb = mix(dark, mix(mid, light, n2), noise);
   }
 
   gl_FragColor = color;
@@ -486,8 +489,15 @@ function render() {
   gl.drawArrays(gl.TRIANGLES, 0, 6);
 
   // --- Pass 4: Cloth perimeter binding (包边) ---
+  const edgeColors = [
+    [0.6, 0.7, 1.0],  // stress = cool blue
+    [0.5, 0.9, 0.6],  // wireframe = green
+    [0.8, 0.9, 1.0],  // edge glow = bright white-blue
+    [0.6, 0.08, 0.1], // velvet = dark red
+  ];
+  const ec = edgeColors[currentMode] || edgeColors[2];
   gl.useProgram(stencilProg);
-  gl.uniform3f(gl.getUniformLocation(stencilProg, 'u_color'), 0.9, 0.95, 1.0);
+  gl.uniform3f(gl.getUniformLocation(stencilProg, 'u_color'), ec[0], ec[1], ec[2]);
   const perim = getClothPerimeter(cloth);
   let ei = 0;
   for (const p of perim) { edgeF32[ei++] = p.x; edgeF32[ei++] = p.y; }
