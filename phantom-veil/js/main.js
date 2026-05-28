@@ -545,14 +545,15 @@ function render() {
   gl.clearColor(0, 0, 0, 1);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
 
-  // --- Pass 1: Glass (hidden content) scissored to cloth bounds ---
-  // All coords are DPR-adjusted (same as canvas framebuffer)
+  // --- Pass 1: Glass (hidden content) scissored inside cloth bounds ---
+  // Glass is slightly smaller than cloth, centered within it
+  const glassMargin = 12; // px inset on each side
   gl.enable(gl.SCISSOR_TEST);
   gl.scissor(
-    cloth.baseX,                              // left
-    res.h - cloth.baseY - cloth.height,        // bottom (flip Y)
-    cloth.width,                               // width
-    cloth.height                               // height
+    cloth.baseX + glassMargin,
+    res.h - cloth.baseY - cloth.height + glassMargin,
+    cloth.width - glassMargin * 2,
+    cloth.height - glassMargin * 2
   );
 
   const mirror = handTracker.getCameraFacingMode() === 'user' ? 1.0 : 0.0;
@@ -573,73 +574,76 @@ function render() {
   gl.drawArrays(gl.TRIANGLES, 0, 6);
   gl.disable(gl.SCISSOR_TEST);
 
-  // --- Pass 2: Stencil — draw cloth grid ---
-  gl.enable(gl.STENCIL_TEST);
-  gl.stencilFunc(gl.ALWAYS, 1, 0xFF);
-  gl.stencilOp(gl.KEEP, gl.KEEP, gl.REPLACE);
-  gl.colorMask(false, false, false, false);
-
-  // Build triangle mesh from cloth grid quads (into pre-allocated stencilF32)
-  const { cols, rows, points: pts } = cloth;
-  let si = 0;
-  for (let y = 0; y < rows - 1; y++) {
-    for (let x = 0; x < cols - 1; x++) {
-      const i = y * cols + x;
-      stencilF32[si++] = pts[i].x; stencilF32[si++] = pts[i].y;
-      stencilF32[si++] = pts[i + 1].x; stencilF32[si++] = pts[i + 1].y;
-      stencilF32[si++] = pts[i + cols].x; stencilF32[si++] = pts[i + cols].y;
-      stencilF32[si++] = pts[i + 1].x; stencilF32[si++] = pts[i + 1].y;
-      stencilF32[si++] = pts[i + cols + 1].x; stencilF32[si++] = pts[i + cols + 1].y;
-      stencilF32[si++] = pts[i + cols].x; stencilF32[si++] = pts[i + cols].y;
-    }
-  }
-
-  gl.bindBuffer(gl.ARRAY_BUFFER, stencilBuf);
-  gl.bufferSubData(gl.ARRAY_BUFFER, 0, stencilF32);
-
-  gl.useProgram(stencilProg);
-  gl.uniform2f(gl.getUniformLocation(stencilProg, 'u_resolution'), res.w, res.h);
-  gl.bindBuffer(gl.ARRAY_BUFFER, stencilBuf);
-  gl.enableVertexAttribArray(stencilPosLoc);
-  gl.vertexAttribPointer(stencilPosLoc, 2, gl.FLOAT, false, 0, 0);
-  gl.drawArrays(gl.TRIANGLES, 0, stencilCount / 2);
-
-  // --- Pass 3: Veil shader (only where stencil == 1, scissored to cloth bounds) ---
+  // --- Pass 2 & 3: Stencil + Veil (skipped when veil is hidden) ---
   if (showVeil) {
-  gl.stencilFunc(gl.EQUAL, 1, 0xFF);
-  gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
-  gl.colorMask(true, true, true, true);
+    // Build triangle mesh from cloth grid quads (into pre-allocated stencilF32)
+    const { cols, rows, points: pts } = cloth;
+    let si = 0;
+    for (let y = 0; y < rows - 1; y++) {
+      for (let x = 0; x < cols - 1; x++) {
+        const i = y * cols + x;
+        stencilF32[si++] = pts[i].x; stencilF32[si++] = pts[i].y;
+        stencilF32[si++] = pts[i + 1].x; stencilF32[si++] = pts[i + 1].y;
+        stencilF32[si++] = pts[i + cols].x; stencilF32[si++] = pts[i + cols].y;
+        stencilF32[si++] = pts[i + 1].x; stencilF32[si++] = pts[i + 1].y;
+        stencilF32[si++] = pts[i + cols + 1].x; stencilF32[si++] = pts[i + cols + 1].y;
+        stencilF32[si++] = pts[i + cols].x; stencilF32[si++] = pts[i + cols].y;
+      }
+    }
 
-  gl.enable(gl.SCISSOR_TEST);
-  gl.scissor(
-    cloth.baseX,
-    res.h - cloth.baseY - cloth.height,
-    cloth.width,
-    cloth.height
-  );
+    gl.bindBuffer(gl.ARRAY_BUFFER, stencilBuf);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, stencilF32);
 
-  const mirror = handTracker.getCameraFacingMode() === 'user' ? 1.0 : 0.0;
-  gl.useProgram(veilProg);
-  gl.uniform1f(veilMirrorLoc, mirror);
-  gl.uniform1i(veilWebcamLoc, 0);
-  gl.uniform1i(gl.getUniformLocation(veilProg, 'u_clothData'), 1);
-  gl.uniform2f(gl.getUniformLocation(veilProg, 'u_clothTexSize'), cloth.cols, cloth.rows);
-  gl.uniform1f(gl.getUniformLocation(veilProg, 'u_time'), performance.now() * 0.001);
-  gl.uniform1i(gl.getUniformLocation(veilProg, 'u_mode'), currentMode);
+    // Pass 2: Stencil fill
+    gl.enable(gl.STENCIL_TEST);
+    gl.stencilFunc(gl.ALWAYS, 1, 0xFF);
+    gl.stencilOp(gl.KEEP, gl.KEEP, gl.REPLACE);
+    gl.colorMask(false, false, false, false);
 
-  gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, webcamTexture);
-  gl.activeTexture(gl.TEXTURE1);
-  gl.bindTexture(gl.TEXTURE_2D, clothDataTexture);
+    gl.useProgram(stencilProg);
+    gl.uniform2f(gl.getUniformLocation(stencilProg, 'u_resolution'), res.w, res.h);
+    gl.bindBuffer(gl.ARRAY_BUFFER, stencilBuf);
+    gl.enableVertexAttribArray(stencilPosLoc);
+    gl.vertexAttribPointer(stencilPosLoc, 2, gl.FLOAT, false, 0, 0);
+    gl.drawArrays(gl.TRIANGLES, 0, stencilCount / 2);
 
-  gl.bindBuffer(gl.ARRAY_BUFFER, quad.posBuf);
-  gl.enableVertexAttribArray(quad.posLoc);
-  gl.vertexAttribPointer(quad.posLoc, 2, gl.FLOAT, false, 0, 0);
-  gl.bindBuffer(gl.ARRAY_BUFFER, quad.texBuf);
-  gl.enableVertexAttribArray(quad.texLoc);
-  gl.vertexAttribPointer(quad.texLoc, 2, gl.FLOAT, false, 0, 0);
-  gl.drawArrays(gl.TRIANGLES, 0, 6);
-  gl.disable(gl.SCISSOR_TEST);
+    // Pass 3: Veil shader (where stencil == 1, scissored to cloth bounds)
+    gl.stencilFunc(gl.EQUAL, 1, 0xFF);
+    gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+    gl.colorMask(true, true, true, true);
+
+    gl.enable(gl.SCISSOR_TEST);
+    gl.scissor(
+      cloth.baseX,
+      res.h - cloth.baseY - cloth.height,
+      cloth.width,
+      cloth.height
+    );
+
+    const mirror = handTracker.getCameraFacingMode() === 'user' ? 1.0 : 0.0;
+    gl.useProgram(veilProg);
+    gl.uniform1f(veilMirrorLoc, mirror);
+    gl.uniform1i(veilWebcamLoc, 0);
+    gl.uniform1i(gl.getUniformLocation(veilProg, 'u_clothData'), 1);
+    gl.uniform2f(gl.getUniformLocation(veilProg, 'u_clothTexSize'), cloth.cols, cloth.rows);
+    gl.uniform1f(gl.getUniformLocation(veilProg, 'u_time'), performance.now() * 0.001);
+    gl.uniform1i(gl.getUniformLocation(veilProg, 'u_mode'), currentMode);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, webcamTexture);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, clothDataTexture);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, quad.posBuf);
+    gl.enableVertexAttribArray(quad.posLoc);
+    gl.vertexAttribPointer(quad.posLoc, 2, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, quad.texBuf);
+    gl.enableVertexAttribArray(quad.texLoc);
+    gl.vertexAttribPointer(quad.texLoc, 2, gl.FLOAT, false, 0, 0);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+    gl.disable(gl.SCISSOR_TEST);
+    gl.disable(gl.STENCIL_TEST);
+    gl.colorMask(true, true, true, true);
   }
 
   // --- Pass 4: Cloth perimeter binding (包边) ---
