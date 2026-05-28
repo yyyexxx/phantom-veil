@@ -51,6 +51,12 @@ vec2 getDisp(vec2 uv) {
   return (s.rg - 0.5) * 2.0;
 }
 
+// Absolute displacement magnitude at this point
+float getMag(vec2 uv) {
+  return clamp(length(getDisp(uv)), 0.0, 1.0);
+}
+
+// Local stress: how much displacement changes between neighbors
 float getStress(vec2 uv) {
   vec2 step = 1.0 / u_clothTexSize;
   vec2 d0 = getDisp(uv);
@@ -73,29 +79,36 @@ float isEdge(vec2 uv) {
 
 void main() {
   vec2 uv = v_texCoord;
-  if (u_mirror > 0.5) uv.x = 1.0 - uv.x;
-
-  vec4 color = texture2D(u_webcam, uv);
+  // Sample cloth data at ORIGINAL uv (before mirror), so it aligns with cloth positions
+  float mag = getMag(uv);
   float stress = getStress(uv);
   float edge = isEdge(uv);
 
+  // Mirror for webcam display
+  vec2 webcamUV = uv;
+  if (u_mirror > 0.5) webcamUV.x = 1.0 - webcamUV.x;
+  vec4 color = texture2D(u_webcam, webcamUV);
+
+  // Intensity = max of absolute displacement and local stress
+  float intensity = max(mag * 0.8, stress);
+
   if (u_mode == 0) {
-    // A: Stress heatmap — bright on stretch, dark on compression
-    color.rgb = mix(color.rgb, color.rgb * 0.6, stress * 0.4);
-    color.rgb += vec3(0.12, 0.14, 0.2) * stress;
+    // A: Stress heatmap
+    color.rgb = mix(color.rgb, color.rgb * 0.6, intensity * 0.4);
+    color.rgb += vec3(0.12, 0.14, 0.2) * intensity;
   } else if (u_mode == 1) {
-    // B: Wireframe — grid lines visible on interaction
+    // B: Wireframe
     vec2 grid = fract(uv * u_clothTexSize);
     float line = 1.0 - step(0.04, grid.x) * step(0.04, grid.y);
-    float glow = line * (0.03 + stress * 0.2);
+    float glow = line * (0.03 + intensity * 0.2);
     color.rgb += glow * 0.7;
   } else if (u_mode == 2) {
-    // C: Edge glow — bright halo along cloth perimeter
-    float halo = edge * (0.06 + stress * 0.25);
+    // C: Edge glow
+    float halo = edge * (0.06 + intensity * 0.25);
     color.rgb += vec3(0.5, 0.7, 1.0) * halo;
   } else {
-    // D: Hue shift — blue-green tint under cloth
-    float tint = 0.02 + stress * 0.06;
+    // D: Hue shift
+    float tint = 0.02 + intensity * 0.06;
     color.r = mix(color.r, color.r * 0.9, tint);
     color.g = mix(color.g, color.g * 0.93, tint * 0.7);
     color.b = mix(color.b, color.b * 1.1, tint);
