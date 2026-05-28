@@ -462,15 +462,7 @@ function render() {
   gl.vertexAttribPointer(stencilPosLoc, 2, gl.FLOAT, false, 0, 0);
   gl.drawArrays(gl.TRIANGLES, 0, stencilCount / 2);
 
-  // Re-enable color output for glass pass
-  gl.colorMask(true, true, true, true);
-
-  // --- Pass 2: Glass (hidden content) at cloth bounds ---
-  const gx = cloth.baseX, gy = cloth.baseY, gw = cloth.width, gh = cloth.height;
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  gl.enable(gl.SCISSOR_TEST);
-  gl.scissor(gx / dpr, (canvas.height - (gy + gh) / dpr), gw / dpr, gh / dpr);
-
+  // --- Pass 2: Glass (hidden content) full screen ---
   gl.useProgram(glassProg);
   gl.uniform2f(gl.getUniformLocation(glassProg, 'u_resolution'), res.w, res.h);
   gl.bindBuffer(gl.ARRAY_BUFFER, glassQuad.posBuf);
@@ -480,7 +472,6 @@ function render() {
   gl.enableVertexAttribArray(gl.getAttribLocation(glassProg, 'a_texCoord'));
   gl.vertexAttribPointer(gl.getAttribLocation(glassProg, 'a_texCoord'), 2, gl.FLOAT, false, 0, 0);
   gl.drawArrays(gl.TRIANGLES, 0, 6);
-  gl.disable(gl.SCISSOR_TEST);
 
   // --- Pass 3: Veil shader (only where stencil == 1) ---
   gl.stencilFunc(gl.EQUAL, 1, 0xFF);
@@ -634,9 +625,9 @@ async function start() {
     const sw = window.innerWidth * dpr;
     const sh = window.innerHeight * dpr;
     const clothW = sw;
-    const clothH = sh * 0.8;
+    const clothH = sh;
     const cx = 0;
-    const cy = sh * 0.1;
+    const cy = 0;
     cloth = createCloth(clothW, clothH, {
       cols: 50,
       rows: 46,
