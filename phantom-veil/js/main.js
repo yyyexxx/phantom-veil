@@ -422,13 +422,14 @@ function render() {
   gl.clear(gl.COLOR_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
 
   // --- Pass 1: Glass (hidden content) scissored to cloth bounds ---
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const gx = cloth.baseX / dpr;
-  const gy = (canvas.height - (cloth.baseY + cloth.height) / dpr);
-  const gw = cloth.width / dpr;
-  const gh = cloth.height / dpr;
+  // All coords are DPR-adjusted (same as canvas framebuffer)
   gl.enable(gl.SCISSOR_TEST);
-  gl.scissor(gx, gy, gw, gh);
+  gl.scissor(
+    cloth.baseX,                              // left
+    res.h - cloth.baseY - cloth.height,        // bottom (flip Y)
+    cloth.width,                               // width
+    cloth.height                               // height
+  );
 
   gl.useProgram(glassProg);
   gl.uniform2f(gl.getUniformLocation(glassProg, 'u_resolution'), res.w, res.h);
